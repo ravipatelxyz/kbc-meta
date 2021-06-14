@@ -1,0 +1,41 @@
+./bin/kbc-cli.py --train data/wn18rr/train.tsv --dev data/wn18rr/dev.tsv --test data/wn18rr/test.tsv -m transe -k 100 -b 100 -e 100 --F2 0.005 --N3 0 -l 0.1 -I reciprocal -V 3 -o adagrad -c spo -q
+{'F2': 0.005,
+ 'N3': 0.0,
+ 'batch_size': 100,
+ 'corruption': 'spo',
+ 'dev': 'data/wn18rr/dev.tsv',
+ 'embedding_size': 100,
+ 'epochs': 100,
+ 'eval_batch_size': None,
+ 'input_type': 'reciprocal',
+ 'learning_rate': 0.1,
+ 'load': None,
+ 'model': 'transe',
+ 'optimizer': 'adagrad',
+ 'quiet': True,
+ 'save': None,
+ 'seed': 0,
+ 'test': 'data/wn18rr/test.tsv',
+ 'test_i': None,
+ 'test_ii': None,
+ 'train': 'data/wn18rr/train.tsv',
+ 'validate_every': 3}
+INFO:kbc-cli.py:Device: cuda
+INFO:kbc-cli.py:Model state:
+INFO:kbc-cli.py:	entities.weight	torch.Size([40943, 100])
+INFO:kbc-cli.py:	predicates.weight	torch.Size([22, 100])
+INFO:kbc-cli.py:Epoch 1/100	Loss 26.1748 ± 0.9370
+INFO:kbc-cli.py:Epoch 2/100	Loss 22.5361 ± 0.5231
+INFO:kbc-cli.py:Epoch 3/100	Loss 20.9162 ± 0.4175
+INFO:kbc-cli.py:Epoch 3/100	dev results	MRR 0.029598	H@1 0.005438	H@3 0.040541	H@5 0.049440	H@10 0.068721	H@20 0.092287	H@50 0.127060	H@100 0.159031
+INFO:kbc-cli.py:Epoch 3/100	test results	MRR 0.028042	H@1 0.005584	H@3 0.036854	H@5 0.046426	H@10 0.065252	H@20 0.085673	H@50 0.120772	H@100 0.152680
+INFO:kbc-cli.py:Epoch 4/100	Loss 19.7757 ± 0.3835
+INFO:kbc-cli.py:Epoch 5/100	Loss 18.8737 ± 0.3631
+INFO:kbc-cli.py:Epoch 6/100	Loss 18.1172 ± 0.3583
+INFO:kbc-cli.py:Epoch 6/100	dev results	MRR 0.050937	H@1 0.007746	H@3 0.072182	H@5 0.096078	H@10 0.122940	H@20 0.154252	H@50 0.204351	H@100 0.248682
+INFO:kbc-cli.py:Epoch 6/100	test results	MRR 0.048303	H@1 0.007179	H@3 0.067805	H@5 0.087907	H@10 0.119017	H@20 0.151244	H@50 0.199107	H@100 0.239949
+INFO:kbc-cli.py:Epoch 7/100	Loss 17.4611 ± 0.3488
+INFO:kbc-cli.py:Epoch 8/100	Loss 16.8798 ± 0.3370
+INFO:kbc-cli.py:Epoch 9/100	Loss 16.3573 ± 0.3337
+INFO:kbc-cli.py:Epoch 9/100	dev results	MRR 0.075558	H@1 0.008570	H@3 0.115689	H@5 0.152604	H@10 0.191332	H@20 0.228411	H@50 0.276862	H@100 0.321028
+INFO:kbc-cli.py:Epoch 9/100	test results	MRR 0.073924	H@1 0.008775	H@3 0.114391	H@5 0.145980	H@10 0.182036	H@20 0.220006	H@50 0.272655	H@100 0.317645

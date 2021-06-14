@@ -1,0 +1,15 @@
+#!/bin/bash -l
+#$ -cwd
+#$ -S /bin/bash
+#$ -o $HOME/array.out
+#$ -e $HOME/array.err
+#$ -t 1-10
+#$ -l tmem=12G
+#$ -l h_rt=12:00:00
+#$ -l gpu=true
+export LANG="en_US.utf8"
+export LANGUAGE="en_US:en"
+# Activate the correct gpu environment
+source ${HOME}/.activate_conda
+cd $HOME/kbc_meta
+test $SGE_TASK_ID -eq 1 && sleep 10 && PYTHONPATH=. python kbc-cli.py --train data/fb15k-237/train.tsv --dev data/fb15k-237/dev.tsv --test data/fb15k-237/test.tsv -m complex -k 100 -b 50 -B 50 -e 100 --F2 0 --N3 0.05 -l 0.1 -I standard -V 3 -o adagrad -c so --save complex1.pth -q

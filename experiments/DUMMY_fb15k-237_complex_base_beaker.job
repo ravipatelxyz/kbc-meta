@@ -1,0 +1,22 @@
+#!/bin/bash -l
+
+#$ -cwd
+#$ -S /bin/bash
+#$ -o $HOME/kbc_meta/logs/array.out
+#$ -e $HOME/kbc_meta/logs/array.err
+#$ -t 1-5
+#$ -l tmem=8G
+#$ -l h_rt=00:15:00
+#$ -l gpu=true
+export LANG="en_US.utf8"
+export LANGUAGE="en_US:en"
+source $HOME/.activate_conda
+export WANDB_API_KEY=9903f079d28315317cc996b863de147f9135a2bf
+cd $HOME
+
+
+test $SGE_TASK_ID -eq 1 && sleep 30 && PYTHONPATH=. python3 kbc_meta/kbc-cli.py --train kbc_meta/data/fb15k-237/train.tsv --dev kbc_meta/data/fb15k-237/dev.tsv --test kbc_meta/data/fb15k-237/test.tsv -m complex -k 100 -b 50 -e 2 --F2 0.001 --N3 0 -l 0.1 -I standard -V 1 -o adagrad -c so -q  --save kbc_meta/logs/fb15k-237/fb15k-237_complex_base_beaker_v1/fb15k-237_beaker_v1.V=1_b=50_c=so_e=2_f2=0.001_i=standard_k=100_lr=0.1_m=complex_n3=0_o=adagrad.pth > kbc_meta/logs/fb15k-237/fb15k-237_complex_base_beaker_v1/fb15k-237_beaker_v1.V=1_b=50_c=so_e=2_f2=0.001_i=standard_k=100_lr=0.1_m=complex_n3=0_o=adagrad.log 2>&1
+test $SGE_TASK_ID -eq 2 && sleep 30 && PYTHONPATH=. python3 kbc_meta/kbc-cli.py --train kbc_meta/data/fb15k-237/train.tsv --dev kbc_meta/data/fb15k-237/dev.tsv --test kbc_meta/data/fb15k-237/test.tsv -m complex -k 100 -b 50 -e 2 --F2 0.001 --N3 0 -l 0.1 -I reciprocal -V 1 -o adagrad -c so -q  --save kbc_meta/logs/fb15k-237/fb15k-237_complex_base_beaker_v1/fb15k-237_beaker_v1.V=1_b=50_c=so_e=2_f2=0.001_i=reciprocal_k=100_lr=0.1_m=complex_n3=0_o=adagrad.pth > kbc_meta/logs/fb15k-237/fb15k-237_complex_base_beaker_v1/fb15k-237_beaker_v1.V=1_b=50_c=so_e=2_f2=0.001_i=reciprocal_k=100_lr=0.1_m=complex_n3=0_o=adagrad.log 2>&1
+test $SGE_TASK_ID -eq 3 && sleep 30 && PYTHONPATH=. python3 kbc_meta/kbc-cli.py --train kbc_meta/data/fb15k-237/train.tsv --dev kbc_meta/data/fb15k-237/dev.tsv --test kbc_meta/data/fb15k-237/test.tsv -m complex -k 100 -b 50 -e 2 --F2 0 --N3 0.01 -l 0.1 -I standard -V 1 -o adagrad -c so -q  --save kbc_meta/logs/fb15k-237/fb15k-237_complex_base_beaker_v1/fb15k-237_beaker_v1.V=1_b=50_c=so_e=2_f2=0_i=standard_k=100_lr=0.1_m=complex_n3=0.01_o=adagrad.pth > kbc_meta/logs/fb15k-237/fb15k-237_complex_base_beaker_v1/fb15k-237_beaker_v1.V=1_b=50_c=so_e=2_f2=0_i=standard_k=100_lr=0.1_m=complex_n3=0.01_o=adagrad.log 2>&1
+test $SGE_TASK_ID -eq 4 && sleep 30 && PYTHONPATH=. python3 kbc_meta/kbc-cli.py --train kbc_meta/data/fb15k-237/train.tsv --dev kbc_meta/data/fb15k-237/dev.tsv --test kbc_meta/data/fb15k-237/test.tsv -m complex -k 100 -b 50 -e 2 --F2 0.005 --N3 0 -l 0.1 -I standard -V 1 -o adagrad -c so -q  --save kbc_meta/logs/fb15k-237/fb15k-237_complex_base_beaker_v1/fb15k-237_beaker_v1.V=1_b=50_c=so_e=2_f2=0.005_i=standard_k=100_lr=0.1_m=complex_n3=0_o=adagrad.pth > kbc_meta/logs/fb15k-237/fb15k-237_complex_base_beaker_v1/fb15k-237_beaker_v1.V=1_b=50_c=so_e=2_f2=0.005_i=standard_k=100_lr=0.1_m=complex_n3=0_o=adagrad.log 2>&1
+test $SGE_TASK_ID -eq 5 && sleep 30 && PYTHONPATH=. python3 kbc_meta/kbc-cli.py --train kbc_meta/data/fb15k-237/train.tsv --dev kbc_meta/data/fb15k-237/dev.tsv --test kbc_meta/data/fb15k-237/test.tsv -m complex -k 100 -b 50 -e 2 --F2 0.005 --N3 0 -l 0.1 -I reciprocal -V 1 -o adagrad -c so -q  --save kbc_meta/logs/fb15k-237/fb15k-237_complex_base_beaker_v1/fb15k-237_beaker_v1.V=1_b=50_c=so_e=2_f2=0.005_i=reciprocal_k=100_lr=0.1_m=complex_n3=0_o=adagrad.pth > kbc_meta/logs/fb15k-237/fb15k-237_complex_base_beaker_v1/fb15k-237_beaker_v1.V=1_b=50_c=so_e=2_f2=0.005_i=reciprocal_k=100_lr=0.1_m=complex_n3=0_o=adagrad.log 2>&1

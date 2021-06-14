@@ -1,0 +1,67 @@
+./bin/kbc-cli.py --train data/yago3-10/train.tsv --dev data/yago3-10/dev.tsv --test data/yago3-10/test.tsv -m complex -k 4000 -b 50 -e 100 --F2 0 --N3 0.01 -l 0.1 -I standard -V 3 -o adagrad -c spo -q
+{'F2': 0.0,
+ 'N3': 0.01,
+ 'batch_size': 50,
+ 'corruption': 'spo',
+ 'dev': 'data/yago3-10/dev.tsv',
+ 'embedding_size': 4000,
+ 'epochs': 100,
+ 'eval_batch_size': None,
+ 'input_type': 'standard',
+ 'learning_rate': 0.1,
+ 'load': None,
+ 'model': 'complex',
+ 'optimizer': 'adagrad',
+ 'quiet': True,
+ 'save': None,
+ 'seed': 0,
+ 'test': 'data/yago3-10/test.tsv',
+ 'test_i': None,
+ 'test_ii': None,
+ 'train': 'data/yago3-10/train.tsv',
+ 'validate_every': 3}
+INFO:kbc-cli.py:Device: cuda
+INFO:kbc-cli.py:Model state:
+INFO:kbc-cli.py:	entities.weight	torch.Size([123182, 8000])
+INFO:kbc-cli.py:	predicates.weight	torch.Size([37, 8000])
+Traceback (most recent call last):
+  File "./bin/kbc-cli.py", line 265, in <module>
+    main(sys.argv[1:])
+  File "./bin/kbc-cli.py", line 227, in main
+    loss.backward()
+  File "/home/pminervi/anaconda3/envs/gpu/lib/python3.6/site-packages/torch/tensor.py", line 185, in backward
+    torch.autograd.backward(self, gradient, retain_graph, create_graph)
+  File "/home/pminervi/anaconda3/envs/gpu/lib/python3.6/site-packages/torch/autograd/__init__.py", line 127, in backward
+    allow_unreachable=True)  # allow_unreachable flag
+RuntimeError: CUDA out of memory. Tried to allocate 1.84 GiB (GPU 0; 10.92 GiB total capacity; 9.29 GiB already allocated; 993.38 MiB free; 9.31 GiB reserved in total by PyTorch)
+Exception raised from malloc at /pytorch/c10/cuda/CUDACachingAllocator.cpp:272 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::string) + 0x42 (0x2b27ca00a1e2 in /home/pminervi/anaconda3/envs/gpu/lib/python3.6/site-packages/torch/lib/libc10.so)
+frame #1: <unknown function> + 0x1e64b (0x2b27c9dab64b in /home/pminervi/anaconda3/envs/gpu/lib/python3.6/site-packages/torch/lib/libc10_cuda.so)
+frame #2: <unknown function> + 0x1f464 (0x2b27c9dac464 in /home/pminervi/anaconda3/envs/gpu/lib/python3.6/site-packages/torch/lib/libc10_cuda.so)
+frame #3: <unknown function> + 0x1faa1 (0x2b27c9dacaa1 in /home/pminervi/anaconda3/envs/gpu/lib/python3.6/site-packages/torch/lib/libc10_cuda.so)
+frame #4: at::native::empty_cuda(c10::ArrayRef<long>, c10::TensorOptions const&, c10::optional<c10::MemoryFormat>) + 0x11e (0x2b2791c8690e in /home/pminervi/anaconda3/envs/gpu/lib/python3.6/site-packages/torch/lib/libtorch_cuda.so)
+frame #5: <unknown function> + 0xf33949 (0x2b27900c0949 in /home/pminervi/anaconda3/envs/gpu/lib/python3.6/site-packages/torch/lib/libtorch_cuda.so)
+frame #6: <unknown function> + 0xf4d777 (0x2b27900da777 in /home/pminervi/anaconda3/envs/gpu/lib/python3.6/site-packages/torch/lib/libtorch_cuda.so)
+frame #7: <unknown function> + 0x10e9c7d (0x2b27800b5c7d in /home/pminervi/anaconda3/envs/gpu/lib/python3.6/site-packages/torch/lib/libtorch_cpu.so)
+frame #8: <unknown function> + 0x10e9f97 (0x2b27800b5f97 in /home/pminervi/anaconda3/envs/gpu/lib/python3.6/site-packages/torch/lib/libtorch_cpu.so)
+frame #9: at::empty(c10::ArrayRef<long>, c10::TensorOptions const&, c10::optional<c10::MemoryFormat>) + 0xfa (0x2b27801c0a1a in /home/pminervi/anaconda3/envs/gpu/lib/python3.6/site-packages/torch/lib/libtorch_cpu.so)
+frame #10: at::native::mm_cuda(at::Tensor const&, at::Tensor const&) + 0x6c (0x2b2791175ffc in /home/pminervi/anaconda3/envs/gpu/lib/python3.6/site-packages/torch/lib/libtorch_cuda.so)
+frame #11: <unknown function> + 0xf22a20 (0x2b27900afa20 in /home/pminervi/anaconda3/envs/gpu/lib/python3.6/site-packages/torch/lib/libtorch_cuda.so)
+frame #12: <unknown function> + 0xa56530 (0x2b277fa22530 in /home/pminervi/anaconda3/envs/gpu/lib/python3.6/site-packages/torch/lib/libtorch_cpu.so)
+frame #13: at::Tensor c10::Dispatcher::call<at::Tensor, at::Tensor const&, at::Tensor const&>(c10::TypedOperatorHandle<at::Tensor (at::Tensor const&, at::Tensor const&)> const&, at::Tensor const&, at::Tensor const&) const + 0xbc (0x2b278020a81c in /home/pminervi/anaconda3/envs/gpu/lib/python3.6/site-packages/torch/lib/libtorch_cpu.so)
+frame #14: at::mm(at::Tensor const&, at::Tensor const&) + 0x4b (0x2b278015b6ab in /home/pminervi/anaconda3/envs/gpu/lib/python3.6/site-packages/torch/lib/libtorch_cpu.so)
+frame #15: <unknown function> + 0x2ed0a2f (0x2b2781e9ca2f in /home/pminervi/anaconda3/envs/gpu/lib/python3.6/site-packages/torch/lib/libtorch_cpu.so)
+frame #16: <unknown function> + 0xa56530 (0x2b277fa22530 in /home/pminervi/anaconda3/envs/gpu/lib/python3.6/site-packages/torch/lib/libtorch_cpu.so)
+frame #17: at::Tensor c10::Dispatcher::call<at::Tensor, at::Tensor const&, at::Tensor const&>(c10::TypedOperatorHandle<at::Tensor (at::Tensor const&, at::Tensor const&)> const&, at::Tensor const&, at::Tensor const&) const + 0xbc (0x2b278020a81c in /home/pminervi/anaconda3/envs/gpu/lib/python3.6/site-packages/torch/lib/libtorch_cpu.so)
+frame #18: at::Tensor::mm(at::Tensor const&) const + 0x4b (0x2b27802f0cab in /home/pminervi/anaconda3/envs/gpu/lib/python3.6/site-packages/torch/lib/libtorch_cpu.so)
+frame #19: <unknown function> + 0x2d11db7 (0x2b2781cdddb7 in /home/pminervi/anaconda3/envs/gpu/lib/python3.6/site-packages/torch/lib/libtorch_cpu.so)
+frame #20: torch::autograd::generated::MmBackward::apply(std::vector<at::Tensor, std::allocator<at::Tensor> >&&) + 0x25f (0x2b2781cf97df in /home/pminervi/anaconda3/envs/gpu/lib/python3.6/site-packages/torch/lib/libtorch_cpu.so)
+frame #21: <unknown function> + 0x3375bb7 (0x2b2782341bb7 in /home/pminervi/anaconda3/envs/gpu/lib/python3.6/site-packages/torch/lib/libtorch_cpu.so)
+frame #22: torch::autograd::Engine::evaluate_function(std::shared_ptr<torch::autograd::GraphTask>&, torch::autograd::Node*, torch::autograd::InputBuffer&, std::shared_ptr<torch::autograd::ReadyQueue> const&) + 0x1400 (0x2b278233d400 in /home/pminervi/anaconda3/envs/gpu/lib/python3.6/site-packages/torch/lib/libtorch_cpu.so)
+frame #23: torch::autograd::Engine::thread_main(std::shared_ptr<torch::autograd::GraphTask> const&) + 0x451 (0x2b278233dfa1 in /home/pminervi/anaconda3/envs/gpu/lib/python3.6/site-packages/torch/lib/libtorch_cpu.so)
+frame #24: torch::autograd::Engine::thread_init(int, std::shared_ptr<torch::autograd::ReadyQueue> const&, bool) + 0x89 (0x2b2782336119 in /home/pminervi/anaconda3/envs/gpu/lib/python3.6/site-packages/torch/lib/libtorch_cpu.so)
+frame #25: torch::autograd::python::PythonEngine::thread_init(int, std::shared_ptr<torch::autograd::ReadyQueue> const&, bool) + 0x4a (0x2b277df2c4ba in /home/pminervi/anaconda3/envs/gpu/lib/python3.6/site-packages/torch/lib/libtorch_python.so)
+frame #26: <unknown function> + 0xc70f (0x2b277edc470f in /home/pminervi/anaconda3/envs/gpu/lib/python3.6/site-packages/torch/lib/libtorch.so)
+frame #27: <unknown function> + 0x7ea5 (0x2b271e302ea5 in /lib64/libpthread.so.0)
+frame #28: clone + 0x6d (0x2b271e6158dd in /lib64/libc.so.6)
+

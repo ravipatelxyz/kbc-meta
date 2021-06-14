@@ -1,0 +1,18 @@
+# Wercker configuration file
+
+box: conda/miniconda3
+
+no-response-timeout: 600
+command-timeout: 600
+
+build:
+  steps:
+    - script:
+      name: install
+      code: |
+        python3 -m pip install --upgrade -r requirements.txt
+
+    - script:
+        name: Run unit tests
+        code: |
+          python -m pytest tests -v

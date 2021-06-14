@@ -1,0 +1,34 @@
+./bin/kbc-cli.py --train data/wn18rr/train.tsv --dev data/wn18rr/dev.tsv --test data/wn18rr/test.tsv -m transe -k 2000 -b 500 -e 100 --F2 0 --N3 0.01 -l 0.1 -I standard -V 3 -o adagrad -c so -q
+{'F2': 0.0,
+ 'N3': 0.01,
+ 'batch_size': 500,
+ 'corruption': 'so',
+ 'dev': 'data/wn18rr/dev.tsv',
+ 'embedding_size': 2000,
+ 'epochs': 100,
+ 'eval_batch_size': None,
+ 'input_type': 'standard',
+ 'learning_rate': 0.1,
+ 'load': None,
+ 'model': 'transe',
+ 'optimizer': 'adagrad',
+ 'quiet': True,
+ 'save': None,
+ 'seed': 0,
+ 'test': 'data/wn18rr/test.tsv',
+ 'test_i': None,
+ 'test_ii': None,
+ 'train': 'data/wn18rr/train.tsv',
+ 'validate_every': 3}
+INFO:kbc-cli.py:Device: cuda
+INFO:kbc-cli.py:Model state:
+INFO:kbc-cli.py:	entities.weight	torch.Size([40943, 2000])
+INFO:kbc-cli.py:	predicates.weight	torch.Size([11, 2000])
+Traceback (most recent call last):
+  File "./bin/kbc-cli.py", line 266, in <module>
+    main(sys.argv[1:])
+  File "./bin/kbc-cli.py", line 209, in main
+    po_scores = model.forward(xp_batch_emb, None, xo_batch_emb)
+  File "/home/pminervi/workspace/kbc-lm/kbc/models/transe.py", line 75, in forward
+    _arg1 = ent_emb.view(-1, 1, emb_size).repeat(1, batch_size, 1)
+RuntimeError: CUDA out of memory. Tried to allocate 152.53 GiB (GPU 0; 10.76 GiB total capacity; 636.37 MiB already allocated; 9.19 GiB free; 650.00 MiB reserved in total by PyTorch)

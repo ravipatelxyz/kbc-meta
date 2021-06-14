@@ -1,0 +1,54 @@
+./bin/kbc-cli.py --train data/nations/train.tsv --dev data/nations/dev.tsv --test data/nations/test.tsv -m complex -k 500 -b 500 -e 15 --F2 0 --N3 0.01 -l 0.1 -I reciprocal -V 3 -o adagrad -c so -q
+{'F2': 0.0,
+ 'N3': 0.01,
+ 'batch_size': 500,
+ 'corruption': 'so',
+ 'dev': 'data/nations/dev.tsv',
+ 'embedding_size': 500,
+ 'epochs': 15,
+ 'eval_batch_size': None,
+ 'input_type': 'reciprocal',
+ 'learning_rate': 0.1,
+ 'load': None,
+ 'model': 'complex',
+ 'optimizer': 'adagrad',
+ 'quiet': True,
+ 'save': None,
+ 'seed': 0,
+ 'test': 'data/nations/test.tsv',
+ 'test_i': None,
+ 'test_ii': None,
+ 'train': 'data/nations/train.tsv',
+ 'validate_every': 3}
+INFO:kbc-cli.py:Device: cuda
+INFO:kbc-cli.py:Model state:
+INFO:kbc-cli.py:	entities.weight	torch.Size([14, 1000])
+INFO:kbc-cli.py:	predicates.weight	torch.Size([110, 1000])
+INFO:kbc-cli.py:Epoch 1/15	Loss 5.4027 ± 0.0862
+INFO:kbc-cli.py:Epoch 2/15	Loss 4.9026 ± 0.0842
+INFO:kbc-cli.py:Epoch 3/15	Loss 4.4679 ± 0.1569
+INFO:kbc-cli.py:Epoch 3/15	dev results	MRR 0.767492	H@1 0.638191	H@3 0.869347	H@5 0.952261	H@10 1.000000	H@20 1.000000	H@50 1.000000	H@100 1.000000
+INFO:kbc-cli.py:Epoch 3/15	test results	MRR 0.763912	H@1 0.629353	H@3 0.870647	H@5 0.942786	H@10 0.995025	H@20 1.000000	H@50 1.000000	H@100 1.000000
+INFO:kbc-cli.py:Epoch 4/15	Loss 4.2753 ± 0.1358
+INFO:kbc-cli.py:Epoch 5/15	Loss 4.1563 ± 0.1512
+INFO:kbc-cli.py:Epoch 6/15	Loss 4.0848 ± 0.1486
+INFO:kbc-cli.py:Epoch 6/15	dev results	MRR 0.787044	H@1 0.673367	H@3 0.874372	H@5 0.954774	H@10 0.997487	H@20 1.000000	H@50 1.000000	H@100 1.000000
+INFO:kbc-cli.py:Epoch 6/15	test results	MRR 0.775334	H@1 0.641791	H@3 0.893035	H@5 0.955224	H@10 0.997512	H@20 1.000000	H@50 1.000000	H@100 1.000000
+INFO:kbc-cli.py:Epoch 7/15	Loss 4.0387 ± 0.1380
+INFO:kbc-cli.py:Epoch 8/15	Loss 4.0037 ± 0.1562
+INFO:kbc-cli.py:Epoch 9/15	Loss 3.9731 ± 0.1613
+INFO:kbc-cli.py:Epoch 9/15	dev results	MRR 0.791243	H@1 0.670854	H@3 0.902010	H@5 0.962312	H@10 1.000000	H@20 1.000000	H@50 1.000000	H@100 1.000000
+INFO:kbc-cli.py:Epoch 9/15	test results	MRR 0.786947	H@1 0.654229	H@3 0.893035	H@5 0.960199	H@10 0.997512	H@20 1.000000	H@50 1.000000	H@100 1.000000
+INFO:kbc-cli.py:Epoch 10/15	Loss 3.9491 ± 0.1675
+INFO:kbc-cli.py:Epoch 11/15	Loss 3.9159 ± 0.0962
+INFO:kbc-cli.py:Epoch 12/15	Loss 3.9041 ± 0.1448
+INFO:kbc-cli.py:Epoch 12/15	dev results	MRR 0.801748	H@1 0.683417	H@3 0.922111	H@5 0.964824	H@10 1.000000	H@20 1.000000	H@50 1.000000	H@100 1.000000
+INFO:kbc-cli.py:Epoch 12/15	test results	MRR 0.775959	H@1 0.634328	H@3 0.905473	H@5 0.967662	H@10 0.997512	H@20 1.000000	H@50 1.000000	H@100 1.000000
+INFO:kbc-cli.py:Epoch 13/15	Loss 3.8786 ± 0.0845
+INFO:kbc-cli.py:Epoch 14/15	Loss 3.8860 ± 0.1555
+INFO:kbc-cli.py:Epoch 15/15	Loss 3.8674 ± 0.1416
+INFO:kbc-cli.py:Epoch 15/15	dev results	MRR 0.789002	H@1 0.658291	H@3 0.909548	H@5 0.959799	H@10 1.000000	H@20 1.000000	H@50 1.000000	H@100 1.000000
+INFO:kbc-cli.py:Epoch 15/15	test results	MRR 0.786561	H@1 0.654229	H@3 0.902985	H@5 0.972637	H@10 0.997512	H@20 1.000000	H@50 1.000000	H@100 1.000000
+INFO:kbc-cli.py:Final 	dev results	MRR 0.789002	H@1 0.658291	H@3 0.909548	H@5 0.959799	H@10 1.000000	H@20 1.000000	H@50 1.000000	H@100 1.000000
+INFO:kbc-cli.py:Final 	test results	MRR 0.786561	H@1 0.654229	H@3 0.902985	H@5 0.972637	H@10 0.997512	H@20 1.000000	H@50 1.000000	H@100 1.000000
+INFO:kbc-cli.py:Training finished

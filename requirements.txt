@@ -1,0 +1,13 @@
+numpy
+torch
+torchvision
+parameterized
+pytest
+pytest-xdist
+pytest-forked
+wandb
+
+tqdm
+seaborn
+pandas
+matplotlib

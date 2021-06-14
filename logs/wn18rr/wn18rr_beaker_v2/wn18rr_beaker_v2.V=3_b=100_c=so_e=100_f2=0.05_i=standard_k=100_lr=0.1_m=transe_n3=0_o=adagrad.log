@@ -1,0 +1,38 @@
+./bin/kbc-cli.py --train data/wn18rr/train.tsv --dev data/wn18rr/dev.tsv --test data/wn18rr/test.tsv -m transe -k 100 -b 100 -e 100 --F2 0.05 --N3 0 -l 0.1 -I standard -V 3 -o adagrad -c so -q
+{'F2': 0.05,
+ 'N3': 0.0,
+ 'batch_size': 100,
+ 'corruption': 'so',
+ 'dev': 'data/wn18rr/dev.tsv',
+ 'embedding_size': 100,
+ 'epochs': 100,
+ 'eval_batch_size': None,
+ 'input_type': 'standard',
+ 'learning_rate': 0.1,
+ 'load': None,
+ 'model': 'transe',
+ 'optimizer': 'adagrad',
+ 'quiet': True,
+ 'save': None,
+ 'seed': 0,
+ 'test': 'data/wn18rr/test.tsv',
+ 'test_i': None,
+ 'test_ii': None,
+ 'train': 'data/wn18rr/train.tsv',
+ 'validate_every': 3}
+INFO:kbc-cli.py:Device: cuda
+INFO:kbc-cli.py:Model state:
+INFO:kbc-cli.py:	entities.weight	torch.Size([40943, 100])
+INFO:kbc-cli.py:	predicates.weight	torch.Size([11, 100])
+INFO:kbc-cli.py:Epoch 1/100	Loss 36.9602 ± 2.8512
+INFO:kbc-cli.py:Epoch 2/100	Loss 31.8854 ± 0.7977
+INFO:kbc-cli.py:Epoch 3/100	Loss 29.4370 ± 0.6453
+INFO:kbc-cli.py:Epoch 3/100	dev results	MRR 0.009959	H@1 0.000659	H@3 0.011866	H@5 0.016480	H@10 0.023401	H@20 0.034773	H@50 0.057185	H@100 0.081411
+INFO:kbc-cli.py:Epoch 3/100	test results	MRR 0.009869	H@1 0.000000	H@3 0.012923	H@5 0.016752	H@10 0.023931	H@20 0.034620	H@50 0.056796	H@100 0.082642
+INFO:kbc-cli.py:Epoch 4/100	Loss 27.7908 ± 0.5849
+INFO:kbc-cli.py:Epoch 5/100	Loss 26.5506 ± 0.5161
+INFO:kbc-cli.py:Epoch 6/100	Loss 25.5604 ± 0.5039
+INFO:kbc-cli.py:Epoch 6/100	dev results	MRR 0.013964	H@1 0.000659	H@3 0.017798	H@5 0.023731	H@10 0.031971	H@20 0.045649	H@50 0.073171	H@100 0.106955
+INFO:kbc-cli.py:Epoch 6/100	test results	MRR 0.013627	H@1 0.000000	H@3 0.019304	H@5 0.022814	H@10 0.030951	H@20 0.044990	H@50 0.074665	H@100 0.108807
+INFO:kbc-cli.py:Epoch 7/100	Loss 24.7412 ± 0.4801
+INFO:kbc-cli.py:Epoch 8/100	Loss 24.0417 ± 0.4535
