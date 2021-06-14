@@ -11,7 +11,6 @@ import numpy as np
 import torch
 from torch import nn, optim
 
-import higher
 from kbc.util import set_seed
 
 from kbc.training.data import Data
@@ -138,81 +137,80 @@ def main():
     # outer loop
     for outer_step in range(outer_steps):
         # inner loop
-        with higher.innerloop_ctx(model, optimizer) as (fmodel, diffopt):
-            for epoch_no in range(1, nb_epochs + 1):
-                train_log = {}  # dictionary to store training metrics for uploading to wandb for each epoch
-                batcher = Batcher(data.Xs, data.Xp, data.Xo, batch_size, 1, random_state)
-                nb_batches = len(batcher.batches)
+        for epoch_no in range(1, nb_epochs + 1):
+            train_log = {}  # dictionary to store training metrics for uploading to wandb for each epoch
+            batcher = Batcher(data.Xs, data.Xp, data.Xo, batch_size, 1, random_state)
+            nb_batches = len(batcher.batches)
 
-                epoch_loss_values = []  # to store loss for each batch in the epoch
-                epoch_loss_nonreg_values = []
+            epoch_loss_values = []  # to store loss for each batch in the epoch
+            epoch_loss_nonreg_values = []
 
-                for batch_no, (batch_start, batch_end) in enumerate(batcher.batches, 1):
-                    model.train()  # model in training mode
+            for batch_no, (batch_start, batch_end) in enumerate(batcher.batches, 1):
+                model.train()  # model in training mode
 
-                    # Size [B] numpy arrays containing indices of each subject_entity, predicate, and object_entity in the batch
-                    xp_batch, xs_batch, xo_batch, xi_batch = batcher.get_batch(batch_start, batch_end)
+                # Size [B] numpy arrays containing indices of each subject_entity, predicate, and object_entity in the batch
+                xp_batch, xs_batch, xo_batch, xi_batch = batcher.get_batch(batch_start, batch_end)
 
-                    xs_batch = torch.tensor(xs_batch, dtype=torch.long, device=device)
-                    xp_batch = torch.tensor(xp_batch, dtype=torch.long, device=device)
-                    xo_batch = torch.tensor(xo_batch, dtype=torch.long, device=device)
+                xs_batch = torch.tensor(xs_batch, dtype=torch.long, device=device)
+                xp_batch = torch.tensor(xp_batch, dtype=torch.long, device=device)
+                xo_batch = torch.tensor(xo_batch, dtype=torch.long, device=device)
 
-                    # Return embeddings for each s, p, o in the batch
-                    # This returns tensors of shape (batch_size, rank)
-                    xp_batch_emb = predicate_embeddings(xp_batch)
-                    xs_batch_emb = entity_embeddings(xs_batch)
-                    xo_batch_emb = entity_embeddings(xo_batch)
+                # Return embeddings for each s, p, o in the batch
+                # This returns tensors of shape (batch_size, rank)
+                xp_batch_emb = predicate_embeddings(xp_batch)
+                xs_batch_emb = entity_embeddings(xs_batch)
+                xo_batch_emb = entity_embeddings(xo_batch)
 
-                    loss = 0.0
+                loss = 0.0
 
-                    # "sp" corruption applied here (i.e. loss calculated based on model predications for subjects and objects)
-                    # shape of po_scores is (batch_size, Nb_entities in entire dataset)
-                    po_scores = fmodel(xp_batch_emb, None, xo_batch_emb)
-                    non_c_idx = [i for i in range(po_scores.shape[1]) if i != data.entity_to_idx['C']]
-                    xs_batch_c_removed = torch.where(xs_batch > data.entity_to_idx['C'], xs_batch-1, xs_batch)
-                    loss += loss_function(po_scores[:, non_c_idx], xs_batch_c_removed)  # train loss ignoring <A,r,C> terms
+                # "sp" corruption applied here (i.e. loss calculated based on model predications for subjects and objects)
+                # shape of po_scores is (batch_size, Nb_entities in entire dataset)
+                po_scores = model.forward(xp_batch_emb, None, xo_batch_emb)
+                non_c_idx = [i for i in range(po_scores.shape[1]) if i != data.entity_to_idx['C']]
+                xs_batch_c_removed = torch.where(xs_batch > data.entity_to_idx['C'], xs_batch-1, xs_batch)
+                loss += loss_function(po_scores[:, non_c_idx], xs_batch_c_removed)  # train loss ignoring <A,r,C> terms
 
-                    # shape of sp_scores is (batch_size, Nb_entities in entire dataset)
-                    sp_scores = fmodel(xp_batch_emb, xs_batch_emb, None)
-                    xo_batch_c_removed = torch.where(xo_batch > data.entity_to_idx['C'], xo_batch - 1, xo_batch)
-                    loss += loss_function(sp_scores[:, non_c_idx], xo_batch_c_removed)  # train loss ignoring <A,r,C> terms
+                # shape of sp_scores is (batch_size, Nb_entities in entire dataset)
+                sp_scores = model.forward(xp_batch_emb, xs_batch_emb, None)
+                xo_batch_c_removed = torch.where(xo_batch > data.entity_to_idx['C'], xo_batch - 1, xo_batch)
+                loss += loss_function(sp_scores[:, non_c_idx], xo_batch_c_removed)  # train loss ignoring <A,r,C> terms
 
-                    # store loss
-                    loss_nonreg_value = loss.item()
-                    epoch_loss_nonreg_values += [loss_nonreg_value]
+                # store loss
+                loss_nonreg_value = loss.item()
+                epoch_loss_nonreg_values += [loss_nonreg_value]
 
-                    # add on regularization term ||embedding(B)-reg_param||
-                    loss += p_target_regularizer(entity_embeddings(torch.tensor(data.entity_to_idx['B'])), reg_param.weight)
+                # add on regularization term ||embedding(B)-reg_param||
+                loss += p_target_regularizer(entity_embeddings(torch.tensor(data.entity_to_idx['B'])), reg_param.weight)
 
-                    # compute gradient for inner-loop (training backprop)
-                    # loss.backward()
+                # compute gradient for inner-loop (training backprop)
+                loss.backward()
 
-                    diffopt.step(loss)
-                    # optimizer.zero_grad()
+                optimizer.step()
+                optimizer.zero_grad()
 
-                    loss_value = loss.item()
-                    epoch_loss_values += [loss_value]
+                loss_value = loss.item()
+                epoch_loss_values += [loss_value]
 
-                    # print(f"Embedding B:\n {entity_embeddings.weight[1]}")
-                    # print(f"Regulariser param p:\n {reg_param.weight}")
-                    # print(f"reg term: {p_target_regularizer(entity_embeddings.weight[1], reg_param.weight)}")
+                # print(f"Embedding B:\n {entity_embeddings.weight[1]}")
+                # print(f"Regulariser param p:\n {reg_param.weight}")
+                # print(f"reg term: {p_target_regularizer(entity_embeddings.weight[1], reg_param.weight)}")
 
-                    if not is_quiet:
-                        # logger.info(f'Epoch {epoch_no}/{nb_epochs}\tBatch {batch_no}/{nb_batches}\tLoss {loss_value:.6f} ({loss_nonreg_value:.6f})')
-                        print(f'Epoch {epoch_no}/{nb_epochs}\tBatch {batch_no}/{nb_batches}\tLoss {loss_value:.6f} ({loss_nonreg_value:.6f})')
+                if not is_quiet:
+                    # logger.info(f'Epoch {epoch_no}/{nb_epochs}\tBatch {batch_no}/{nb_batches}\tLoss {loss_value:.6f} ({loss_nonreg_value:.6f})')
+                    print(f'Epoch {epoch_no}/{nb_epochs}\tBatch {batch_no}/{nb_batches}\tLoss {loss_value:.6f} ({loss_nonreg_value:.6f})')
 
-                # loss_mean, loss_std = np.mean(epoch_loss_values), np.std(epoch_loss_values)
-                # loss_nonreg_mean, loss_nonreg_std = np.mean(epoch_loss_nonreg_values), np.std(epoch_loss_nonreg_values)
-                # train_log['entity_embeddings'] = entity_embeddings.weight
-                # train_log['predicate_embeddings'] = predicate_embeddings.weight
-                # train_log['reg_hyperparam_values'] = reg_param.weight
-                # train_log['reg_term_norm_value'] = p_target_regularizer(entity_embeddings.weight[1], reg_param.weight)
-                # train_log['loss_mean'] = loss_mean
-                # train_log['loss_std'] = loss_std
-                # train_log['loss_nonreg_mean'] = loss_nonreg_mean
-                # train_log['loss_nonreg_std'] = loss_nonreg_std
-                # logger.info(f'Epoch {epoch_no}/{nb_epochs}\tLoss {loss_mean:.4f} ± {loss_std:.4f} ({loss_nonreg_mean:.4f} ± {loss_nonreg_std:.4f})')
-                # print(f'Epoch {epoch_no}/{nb_epochs}\tLoss {loss_mean:.4f} ± {loss_std:.4f} ({loss_nonreg_mean:.4f} ± {loss_nonreg_std:.4f})')
+            # loss_mean, loss_std = np.mean(epoch_loss_values), np.std(epoch_loss_values)
+            # loss_nonreg_mean, loss_nonreg_std = np.mean(epoch_loss_nonreg_values), np.std(epoch_loss_nonreg_values)
+            # train_log['entity_embeddings'] = entity_embeddings.weight
+            # train_log['predicate_embeddings'] = predicate_embeddings.weight
+            # train_log['reg_hyperparam_values'] = reg_param.weight
+            # train_log['reg_term_norm_value'] = p_target_regularizer(entity_embeddings.weight[1], reg_param.weight)
+            # train_log['loss_mean'] = loss_mean
+            # train_log['loss_std'] = loss_std
+            # train_log['loss_nonreg_mean'] = loss_nonreg_mean
+            # train_log['loss_nonreg_std'] = loss_nonreg_std
+            # logger.info(f'Epoch {epoch_no}/{nb_epochs}\tLoss {loss_mean:.4f} ± {loss_std:.4f} ({loss_nonreg_mean:.4f} ± {loss_nonreg_std:.4f})')
+            # print(f'Epoch {epoch_no}/{nb_epochs}\tLoss {loss_mean:.4f} ± {loss_std:.4f} ({loss_nonreg_mean:.4f} ± {loss_nonreg_std:.4f})')
 
 
         # dev_batcher = Batcher(data.dev_Xs, data.dev_Xp, data.dev_Xo, 1, 1, random_state)
@@ -239,12 +237,13 @@ def main():
         #     # shape of po_scores is (batch_size, Nb_entities in entire dataset)
         #     po_scores = model.forward(dev_xp_batch_emb, None, dev_xo_batch_emb)
         #     non_b_idx = [i for i in range(po_scores.shape[1]) if i != data.entity_to_idx['B']]
-        #     dev_xs_batch_b_removed = torch.where(dev_xs_batch > data.entity_to_idx['B'], dev_xs_batch - 1, dev_xs_batch)
-        #     meta_loss += loss_function(po_scores[:, non_b_idx], dev_xs_batch_b_removed)
+        #     dev_xs_batch_b_removed = torch.where(dev_xs_batch > data.entity_to_idx['B'], dev_xs_batch - 1, xs_batch)
+        #     meta_loss += loss_function(po_scores[:, non_b_idx],
+        #                                dev_xs_batch_b_removed)
         #
         #     # shape of sp_scores is (batch_size, Nb_entities in entire dataset)
         #     sp_scores = model.forward(dev_xp_batch_emb, dev_xs_batch_emb, None)
-        #     dev_xo_batch_b_removed = torch.where(dev_xo_batch > data.entity_to_idx['B'], dev_xo_batch - 1, dev_xo_batch)
+        #     dev_xo_batch_b_removed = torch.where(dev_xo_batch > data.entity_to_idx['B'], dev_xo_batch - 1, xo_batch)
         #     meta_loss += loss_function(sp_scores[:, non_b_idx],
         #                                dev_xo_batch_b_removed)
         #
@@ -274,12 +273,12 @@ if __name__ == '__main__':
     DEV_DIR = "./data/toy/dev.tsv"
     TEST_DIR = None  # "./data/toy/dev.tsv"
     MODEL = "distmult"
-    EMBEDDING_SIZE = 2
+    EMBEDDING_SIZE = 50
     BATCH_SIZE = 2
-    EPOCHS = 10
+    EPOCHS = 500
     OUTER_STEPS = 1
-    LEARNING_RATE = 0.01
-    LEARNING_RATE_OUTER = 0.01
+    LEARNING_RATE = 0.1
+    LEARNING_RATE_OUTER = 0.001
     OPTIMIZER = "adagrad"
     OPTIMIZER_OUTER = "adagrad"
     REGULARIZER = "p_target"
