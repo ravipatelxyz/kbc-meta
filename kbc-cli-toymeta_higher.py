@@ -286,8 +286,8 @@ if __name__ == '__main__':
     OUTER_STEPS = 1
     LEARNING_RATE = 0.1
     LEARNING_RATE_OUTER = 0.01
-    OPTIMIZER = "adam"
-    OPTIMIZER_OUTER = "adam"
+    OPTIMIZER = "adagrad"
+    OPTIMIZER_OUTER = "adagrad"
     REGULARIZER = "p_target"
     INPUT_TYPE = "standard"
     SEED = 4

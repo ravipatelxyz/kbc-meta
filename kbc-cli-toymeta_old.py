@@ -279,7 +279,7 @@ if __name__ == '__main__':
     MODEL = "distmult"
     EMBEDDING_SIZE = 2
     BATCH_SIZE = 2
-    EPOCHS = 200
+    EPOCHS = 500
     OUTER_STEPS = 1
     LEARNING_RATE = 0.1
     LEARNING_RATE_OUTER = 0.001
