@@ -30,7 +30,6 @@ def p_target_regularizer(entity_embedding, reg_param):
 
     return reg
 
-
 # %%
 
 def main():
@@ -81,6 +80,18 @@ def main():
     entity_embeddings.weight.data *= init_size
     predicate_embeddings.weight.data *= init_size
 
+    parameters_lst = nn.ModuleDict({
+        'entities': entity_embeddings,
+        'predicates': predicate_embeddings
+    }).to(device)
+
+    # emb.weight is a tensor of shape (num_embeddings, rank)
+    # entity_t = entity_embeddings.weight
+    # predicate_t = predicate_embeddings.weight
+
+    print(f"STARTING entity embeddings:\n {entity_embeddings.weight}")
+    print(f"STARTING predicate embeddings:\n {predicate_embeddings.weight}")
+
     # Specify regularization term
     if regularizer == "p_target":
         reg_param = nn.Embedding(1, rank).to(device)
@@ -88,27 +99,15 @@ def main():
         print(f"STARTING reg param value, p: {reg_param.weight}")
         print(f"STARTING reg term: {p_target_regularizer(entity_embeddings.weight[1], reg_param.weight)}")
 
-    parameters_lst = nn.ModuleDict({
-        'entities': entity_embeddings,
-        'predicates': predicate_embeddings
-    }).to(device)
-
     parameters_lst_outer = nn.ModuleDict({
         'reg_param': reg_param
     }).to(device)
 
-    # emb.weight is a tensor of shape (num_embeddings, rank)
-    entity_t = entity_embeddings.weight
-    predicate_t = predicate_embeddings.weight
-
-    print(f"STARTING entity embeddings:\n {entity_t}")
-    print(f"STARTING predicate embeddings:\n {predicate_t}")
-
     # When this dictionary is indexed by model name, the appropriate model class will be initialised
     model_factory = {
-        'distmult': lambda: DistMult(entity_embeddings=entity_t, predicate_embeddings=predicate_t),
-        'complex': lambda: ComplEx(entity_embeddings=entity_t, predicate_embeddings=predicate_t),
-        'transe': lambda: TransE(entity_embeddings=entity_t, predicate_embeddings=predicate_t)
+        'distmult': lambda: DistMult(entity_embeddings=entity_embeddings.weight, predicate_embeddings=predicate_embeddings.weight),
+        'complex': lambda: ComplEx(entity_embeddings=entity_embeddings.weight, predicate_embeddings=predicate_embeddings.weight),
+        'transe': lambda: TransE(entity_embeddings=entity_embeddings.weight, predicate_embeddings=predicate_embeddings.weight)
     }
 
     # Initialise correct model
@@ -137,6 +136,8 @@ def main():
     # outer loop
     for outer_step in range(outer_steps):
         # inner loop
+
+        mean_losses = []
         for epoch_no in range(1, nb_epochs + 1):
             train_log = {}  # dictionary to store training metrics for uploading to wandb for each epoch
             batcher = Batcher(data.Xs, data.Xp, data.Xo, batch_size, 1, random_state)
@@ -199,7 +200,8 @@ def main():
                     # logger.info(f'Epoch {epoch_no}/{nb_epochs}\tBatch {batch_no}/{nb_batches}\tLoss {loss_value:.6f} ({loss_nonreg_value:.6f})')
                     print(f'Epoch {epoch_no}/{nb_epochs}\tBatch {batch_no}/{nb_batches}\tLoss {loss_value:.6f} ({loss_nonreg_value:.6f})')
 
-            # loss_mean, loss_std = np.mean(epoch_loss_values), np.std(epoch_loss_values)
+            loss_mean, loss_std = np.mean(epoch_loss_values), np.std(epoch_loss_values)
+            mean_losses += [loss_mean]
             # loss_nonreg_mean, loss_nonreg_std = np.mean(epoch_loss_nonreg_values), np.std(epoch_loss_nonreg_values)
             # train_log['entity_embeddings'] = entity_embeddings.weight
             # train_log['predicate_embeddings'] = predicate_embeddings.weight
@@ -265,6 +267,8 @@ def main():
     print(f"FINAL predicate embeddings: {predicate_embeddings.weight}")
     print(f"FINAL reg param value, p: {reg_param.weight}")
     print(f"FINAL reg term: {p_target_regularizer(entity_embeddings.weight[1], reg_param.weight)}")
+    print(f"\nSTARTING loss: {mean_losses[0]}")
+    print(f"FINAL loss: {mean_losses[-1]}")
 
 if __name__ == '__main__':
 
@@ -273,9 +277,9 @@ if __name__ == '__main__':
     DEV_DIR = "./data/toy/dev.tsv"
     TEST_DIR = None  # "./data/toy/dev.tsv"
     MODEL = "distmult"
-    EMBEDDING_SIZE = 50
+    EMBEDDING_SIZE = 2
     BATCH_SIZE = 2
-    EPOCHS = 500
+    EPOCHS = 200
     OUTER_STEPS = 1
     LEARNING_RATE = 0.1
     LEARNING_RATE_OUTER = 0.001
@@ -283,7 +287,7 @@ if __name__ == '__main__':
     OPTIMIZER_OUTER = "adagrad"
     REGULARIZER = "p_target"
     INPUT_TYPE = "standard"
-    SEED= 5
+    SEED = 4
     QUIET = True
 
     main()

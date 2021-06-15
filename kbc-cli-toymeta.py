@@ -75,12 +75,18 @@ def main():
 
     # nn.Embedding using to a lookup table of embeddings (i.e. you can index entity_embeddings to return given entities embedding)
     # Nice explanation found in Escachator's answer here: https://stackoverflow.com/questions/50747947/embedding-in-pytorch
-    entity_embeddings = nn.Embedding(data.nb_entities, rank, sparse=True).to(device)
-    predicate_embeddings = nn.Embedding(data.nb_predicates, rank, sparse=True).to(device)
+    entity_embeddings = nn.Embedding(data.nb_entities, rank, sparse=False).to(device)
+    predicate_embeddings = nn.Embedding(data.nb_predicates, rank, sparse=False).to(device)
 
     # Downscale the randomly initialised embeddings (initialised with N(0,1))
     entity_embeddings.weight.data *= init_size
     predicate_embeddings.weight.data *= init_size
+
+    parameters_lst = nn.ParameterList([entity_embeddings.weight, predicate_embeddings.weight]).to(device)
+
+    # emb.weight is a tensor of shape (num_embeddings, rank)
+    print(f"STARTING entity embeddings:\n {entity_embeddings.weight}")
+    print(f"STARTING predicate embeddings:\n {predicate_embeddings.weight}")
 
     # Specify regularization term
     if regularizer == "p_target":
@@ -89,27 +95,13 @@ def main():
         print(f"STARTING reg param value, p: {reg_param.weight}")
         print(f"STARTING reg term: {p_target_regularizer(entity_embeddings.weight[1], reg_param.weight)}")
 
-    parameters_lst = nn.ModuleDict({
-        'entities': entity_embeddings,
-        'predicates': predicate_embeddings
-    }).to(device)
-
-    parameters_lst_outer = nn.ModuleDict({
-        'reg_param': reg_param
-    }).to(device)
-
-    # emb.weight is a tensor of shape (num_embeddings, rank)
-    entity_t = entity_embeddings.weight
-    predicate_t = predicate_embeddings.weight
-
-    print(f"STARTING entity embeddings:\n {entity_t}")
-    print(f"STARTING predicate embeddings:\n {predicate_t}")
+    parameters_lst_outer = nn.ParameterList([reg_param.weight]).to(device)
 
     # When this dictionary is indexed by model name, the appropriate model class will be initialised
     model_factory = {
-        'distmult': lambda: DistMult(entity_embeddings=entity_t, predicate_embeddings=predicate_t),
-        'complex': lambda: ComplEx(entity_embeddings=entity_t, predicate_embeddings=predicate_t),
-        'transe': lambda: TransE(entity_embeddings=entity_t, predicate_embeddings=predicate_t)
+        'distmult': lambda: DistMult(entity_embeddings=entity_embeddings.weight, predicate_embeddings=predicate_embeddings.weight),
+        'complex': lambda: ComplEx(entity_embeddings=entity_embeddings.weight, predicate_embeddings=predicate_embeddings.weight),
+        'transe': lambda: TransE(entity_embeddings=entity_embeddings.weight, predicate_embeddings=predicate_embeddings.weight)
     }
 
     # Initialise correct model
@@ -117,15 +109,15 @@ def main():
 
     # When this dictionary is indexed by optimizer name, the appropriate optimizer class will be initialised
     optimizer_factory = {
-        'adagrad': lambda: optim.Adagrad(parameters_lst.parameters(), lr=learning_rate),
-        'adam': lambda: optim.Adam(parameters_lst.parameters(), lr=learning_rate),
-        'sgd': lambda: optim.SGD(parameters_lst.parameters(), lr=learning_rate)
+        'adagrad': lambda: optim.Adagrad(parameters_lst, lr=learning_rate),
+        'adam': lambda: optim.Adam(parameters_lst, lr=learning_rate),
+        'sgd': lambda: optim.SGD(parameters_lst, lr=learning_rate)
     }
 
     optimizer_factory_outer = {
-        'adagrad': lambda: optim.Adagrad(parameters_lst_outer.parameters(), lr=learning_rate_outer),
-        'adam': lambda: optim.Adam(parameters_lst_outer.parameters(), lr=learning_rate_outer),
-        'sgd': lambda: optim.SGD(parameters_lst_outer.parameters(), lr=learning_rate_outer)
+        'adagrad': lambda: optim.Adagrad(parameters_lst_outer, lr=learning_rate_outer),
+        'adam': lambda: optim.Adam(parameters_lst_outer, lr=learning_rate_outer),
+        'sgd': lambda: optim.SGD(parameters_lst_outer, lr=learning_rate_outer)
     }
 
     assert optimizer_name in optimizer_factory
@@ -138,7 +130,14 @@ def main():
     # outer loop
     for outer_step in range(outer_steps):
         # inner loop
-        with higher.innerloop_ctx(model, optimizer) as (fmodel, diffopt):
+
+        mean_losses = []
+        with higher.innerloop_ctx(model, optimizer, device=device, track_higher_grads=True) as (fmodel, diffopt):
+
+            e_tensor_lh = entity_embeddings.weight
+            p_tensor_lh = predicate_embeddings.weight
+            parameters_lst_lh = [e_tensor_lh, p_tensor_lh]
+
             for epoch_no in range(1, nb_epochs + 1):
                 train_log = {}  # dictionary to store training metrics for uploading to wandb for each epoch
                 batcher = Batcher(data.Xs, data.Xp, data.Xo, batch_size, 1, random_state)
@@ -148,7 +147,7 @@ def main():
                 epoch_loss_nonreg_values = []
 
                 for batch_no, (batch_start, batch_end) in enumerate(batcher.batches, 1):
-                    model.train()  # model in training mode
+                    # model.train()  # model in training mode
 
                     # Size [B] numpy arrays containing indices of each subject_entity, predicate, and object_entity in the batch
                     xp_batch, xs_batch, xo_batch, xi_batch = batcher.get_batch(batch_start, batch_end)
@@ -157,23 +156,21 @@ def main():
                     xp_batch = torch.tensor(xp_batch, dtype=torch.long, device=device)
                     xo_batch = torch.tensor(xo_batch, dtype=torch.long, device=device)
 
-                    # Return embeddings for each s, p, o in the batch
-                    # This returns tensors of shape (batch_size, rank)
-                    xp_batch_emb = predicate_embeddings(xp_batch)
-                    xs_batch_emb = entity_embeddings(xs_batch)
-                    xo_batch_emb = entity_embeddings(xo_batch)
+                    xp_batch_emb = parameters_lst_lh[1][xp_batch]
+                    xs_batch_emb = parameters_lst_lh[0][xs_batch]
+                    xo_batch_emb = parameters_lst_lh[0][xo_batch]
 
                     loss = 0.0
 
                     # "sp" corruption applied here (i.e. loss calculated based on model predications for subjects and objects)
                     # shape of po_scores is (batch_size, Nb_entities in entire dataset)
-                    po_scores = fmodel(xp_batch_emb, None, xo_batch_emb)
+                    po_scores = fmodel.forward(xp_batch_emb, None, xo_batch_emb, params=parameters_lst_lh)
                     non_c_idx = [i for i in range(po_scores.shape[1]) if i != data.entity_to_idx['C']]
                     xs_batch_c_removed = torch.where(xs_batch > data.entity_to_idx['C'], xs_batch-1, xs_batch)
                     loss += loss_function(po_scores[:, non_c_idx], xs_batch_c_removed)  # train loss ignoring <A,r,C> terms
 
                     # shape of sp_scores is (batch_size, Nb_entities in entire dataset)
-                    sp_scores = fmodel(xp_batch_emb, xs_batch_emb, None)
+                    sp_scores = fmodel.forward(xp_batch_emb, xs_batch_emb, None, params=parameters_lst_lh)
                     xo_batch_c_removed = torch.where(xo_batch > data.entity_to_idx['C'], xo_batch - 1, xo_batch)
                     loss += loss_function(sp_scores[:, non_c_idx], xo_batch_c_removed)  # train loss ignoring <A,r,C> terms
 
@@ -182,26 +179,20 @@ def main():
                     epoch_loss_nonreg_values += [loss_nonreg_value]
 
                     # add on regularization term ||embedding(B)-reg_param||
-                    loss += p_target_regularizer(entity_embeddings(torch.tensor(data.entity_to_idx['B'])), reg_param.weight)
-
-                    # compute gradient for inner-loop (training backprop)
-                    # loss.backward()
-
-                    diffopt.step(loss)
-                    # optimizer.zero_grad()
+                    loss += p_target_regularizer(parameters_lst_lh[0][data.entity_to_idx['B']], reg_param.weight)
 
                     loss_value = loss.item()
                     epoch_loss_values += [loss_value]
 
-                    # print(f"Embedding B:\n {entity_embeddings.weight[1]}")
-                    # print(f"Regulariser param p:\n {reg_param.weight}")
-                    # print(f"reg term: {p_target_regularizer(entity_embeddings.weight[1], reg_param.weight)}")
+                    e_tensor_lh, p_tensor_lh = diffopt.step(loss, params=parameters_lst_lh)
+                    parameters_lst_lh = [e_tensor_lh, p_tensor_lh]
 
                     if not is_quiet:
                         # logger.info(f'Epoch {epoch_no}/{nb_epochs}\tBatch {batch_no}/{nb_batches}\tLoss {loss_value:.6f} ({loss_nonreg_value:.6f})')
                         print(f'Epoch {epoch_no}/{nb_epochs}\tBatch {batch_no}/{nb_batches}\tLoss {loss_value:.6f} ({loss_nonreg_value:.6f})')
 
-                # loss_mean, loss_std = np.mean(epoch_loss_values), np.std(epoch_loss_values)
+                loss_mean, loss_std = np.mean(epoch_loss_values), np.std(epoch_loss_values)
+                mean_losses += [loss_mean]
                 # loss_nonreg_mean, loss_nonreg_std = np.mean(epoch_loss_nonreg_values), np.std(epoch_loss_nonreg_values)
                 # train_log['entity_embeddings'] = entity_embeddings.weight
                 # train_log['predicate_embeddings'] = predicate_embeddings.weight
@@ -260,12 +251,27 @@ def main():
 
 
     # logger.info("Training finished")
+
     print("\nTraining finished\n")
 
-    print(f"FINAL entity embeddings: {entity_embeddings.weight}")
-    print(f"FINAL predicate embeddings: {predicate_embeddings.weight}")
-    print(f"FINAL reg param value, p: {reg_param.weight}")
-    print(f"FINAL reg term: {p_target_regularizer(entity_embeddings.weight[1], reg_param.weight)}")
+    print(f"START params: {parameters_lst}")
+    print(f"FINAL params: {parameters_lst_lh}")
+    # print(f"FINAL params: {[param for param in parameters_lst.parameters()]}")
+    print(parameters_lst_lh[0][1])
+    print(f"FINAL reg param value, p: {reg_param.weight}") # todo make sure this returns the updated and not initialised value
+    print(f"FINAL reg term: {p_target_regularizer(parameters_lst_lh[0][1], reg_param.weight)}")
+
+    print(f"\nstarting loss: {mean_losses[0]}")
+    print(f"final loss: {mean_losses[-1]}")
+
+    # print(f"FINAL predicate embeddings: {predicate_embeddings.weight}")
+    # print(f"FINAL reg param value, p: {reg_param.weight}")
+    # print(f"FINAL reg term: {p_target_regularizer(entity_embeddings.weight[1], reg_param.weight)}")
+
+    # print(f"FINAL entity embeddings: {entity_embeddings.weight}")
+    # print(f"FINAL predicate embeddings: {predicate_embeddings.weight}")
+    # print(f"FINAL reg param value, p: {reg_param.weight}")
+    # print(f"FINAL reg term: {p_target_regularizer(entity_embeddings.weight[1], reg_param.weight)}")
 
 if __name__ == '__main__':
 
@@ -276,15 +282,15 @@ if __name__ == '__main__':
     MODEL = "distmult"
     EMBEDDING_SIZE = 2
     BATCH_SIZE = 2
-    EPOCHS = 10
+    EPOCHS = 200
     OUTER_STEPS = 1
-    LEARNING_RATE = 0.01
+    LEARNING_RATE = 0.1
     LEARNING_RATE_OUTER = 0.01
-    OPTIMIZER = "adagrad"
-    OPTIMIZER_OUTER = "adagrad"
+    OPTIMIZER = "adam"
+    OPTIMIZER_OUTER = "adam"
     REGULARIZER = "p_target"
     INPUT_TYPE = "standard"
-    SEED= 5
+    SEED = 4
     QUIET = True
 
     main()
