@@ -7,7 +7,6 @@ import os
 
 import multiprocessing
 import numpy as np
-import matplotlib.pyplot as plt
 
 import torch
 from torch import nn, optim
@@ -22,7 +21,7 @@ from kbc.models import DistMult, ComplEx, TransE
 
 import logging
 
-# logger = logging.getLogger(os.path.basename(sys.argv[0]))
+logger = logging.getLogger(os.path.basename(sys.argv[0]))
 torch.set_num_threads(multiprocessing.cpu_count())
 
 # %%
@@ -50,7 +49,6 @@ def main():
     outer_steps = OUTER_STEPS
     learning_rate = LEARNING_RATE
     learning_rate_outer = LEARNING_RATE_OUTER
-    meta_loss_type = META_LOSS_TYPE
     regularizer = REGULARIZER
     input_type = INPUT_TYPE
     is_quiet = QUIET
@@ -130,10 +128,6 @@ def main():
     loss_function = nn.CrossEntropyLoss(reduction='mean')
 
     # outer loop
-    meta_losses = []
-    reg_param_values_lst = []
-    embedding_of_B = []
-    embedding_of_C = []
     for outer_step in range(outer_steps):
         # inner loop
 
@@ -199,112 +193,104 @@ def main():
 
                 loss_mean, loss_std = np.mean(epoch_loss_values), np.std(epoch_loss_values)
                 mean_losses += [loss_mean]
+                # loss_nonreg_mean, loss_nonreg_std = np.mean(epoch_loss_nonreg_values), np.std(epoch_loss_nonreg_values)
+                # train_log['entity_embeddings'] = entity_embeddings.weight
+                # train_log['predicate_embeddings'] = predicate_embeddings.weight
+                # train_log['reg_hyperparam_values'] = reg_param.weight
+                # train_log['reg_term_norm_value'] = p_target_regularizer(entity_embeddings.weight[1], reg_param.weight)
+                # train_log['loss_mean'] = loss_mean
+                # train_log['loss_std'] = loss_std
+                # train_log['loss_nonreg_mean'] = loss_nonreg_mean
+                # train_log['loss_nonreg_std'] = loss_nonreg_std
+                # logger.info(f'Epoch {epoch_no}/{nb_epochs}\tLoss {loss_mean:.4f} ± {loss_std:.4f} ({loss_nonreg_mean:.4f} ± {loss_nonreg_std:.4f})')
+                # print(f'Epoch {epoch_no}/{nb_epochs}\tLoss {loss_mean:.4f} ± {loss_std:.4f} ({loss_nonreg_mean:.4f} ± {loss_nonreg_std:.4f})')
 
 
-        if meta_loss_type == "||B-C||":
-            optimizer_outer.zero_grad()
-            meta_loss = torch.norm(parameters_lst_lh[0][data.entity_to_idx['B']]
-                                   - parameters_lst_lh[0][data.entity_to_idx['C']])
-            # print(meta_loss)
-            meta_losses += [meta_loss.detach().clone().item()]
-            reg_param_values_lst += [reg_param.weight.detach().clone().item()]
-            embedding_of_B += [parameters_lst_lh[0][1].detach().clone().item()]
-            embedding_of_C += [parameters_lst_lh[0][2].detach().clone().item()]
-
-            meta_loss.backward()
-            optimizer_outer.step()
-
-            temp_debug=0
-
-        # # THIS SECTION FOR CROSS_ENTROPY METALOSS NOT YET PROPERLY IMPLEMENTED
-        # elif meta_loss_type == "cross-entropy":
+        # dev_batcher = Batcher(data.dev_Xs, data.dev_Xp, data.dev_Xo, 1, 1, random_state)
+        # batch_meta_loss_values = [] # to store meta loss for each triple
         #
-        #     dev_batcher = Batcher(data.dev_Xs, data.dev_Xp, data.dev_Xo, 1, 1, random_state)
-        #     batch_meta_loss_values = [] # to store meta loss for each triple
+        # for batch_no, (batch_start, batch_end) in enumerate(dev_batcher.batches, 1):
         #
-        #     for batch_no, (batch_start, batch_end) in enumerate(dev_batcher.batches, 1):
+        #     # Size [B] numpy arrays containing indices of each subject_entity, predicate, and object_entity in the batch
+        #     dev_xp_batch, dev_xs_batch, dev_xo_batch, dev_xi_batch = dev_batcher.get_batch(batch_start, batch_end)
         #
-        #         # Size [B] numpy arrays containing indices of each subject_entity, predicate, and object_entity in the batch
-        #         dev_xp_batch, dev_xs_batch, dev_xo_batch, dev_xi_batch = dev_batcher.get_batch(batch_start, batch_end)
+        #     dev_xs_batch = torch.tensor(dev_xs_batch, dtype=torch.long, device=device)
+        #     dev_xp_batch = torch.tensor(dev_xp_batch, dtype=torch.long, device=device)
+        #     dev_xo_batch = torch.tensor(dev_xo_batch, dtype=torch.long, device=device)
         #
-        #         dev_xs_batch = torch.tensor(dev_xs_batch, dtype=torch.long, device=device)
-        #         dev_xp_batch = torch.tensor(dev_xp_batch, dtype=torch.long, device=device)
-        #         dev_xo_batch = torch.tensor(dev_xo_batch, dtype=torch.long, device=device)
+        #     # Return embeddings for each s, p, o in the batch
+        #     # This returns tensors of shape (batch_size, rank)
+        #     dev_xp_batch_emb = predicate_embeddings(dev_xp_batch)
+        #     dev_xs_batch_emb = entity_embeddings(dev_xs_batch)
+        #     dev_xo_batch_emb = entity_embeddings(dev_xo_batch)
         #
-        #         # Return embeddings for each s, p, o in the batch
-        #         # This returns tensors of shape (batch_size, rank)
-        #         dev_xp_batch_emb = predicate_embeddings(dev_xp_batch)
-        #         dev_xs_batch_emb = entity_embeddings(dev_xs_batch)
-        #         dev_xo_batch_emb = entity_embeddings(dev_xo_batch)
+        #     meta_loss = 0.0
         #
-        #         meta_loss = 0.0
+        #     # "sp" corruption applied here (i.e. loss calculated based on model predications for subjects and objects)
+        #     # shape of po_scores is (batch_size, Nb_entities in entire dataset)
+        #     po_scores = model.forward(dev_xp_batch_emb, None, dev_xo_batch_emb)
+        #     non_b_idx = [i for i in range(po_scores.shape[1]) if i != data.entity_to_idx['B']]
+        #     dev_xs_batch_b_removed = torch.where(dev_xs_batch > data.entity_to_idx['B'], dev_xs_batch - 1, dev_xs_batch)
+        #     meta_loss += loss_function(po_scores[:, non_b_idx], dev_xs_batch_b_removed)
         #
-        #         # "sp" corruption applied here (i.e. loss calculated based on model predications for subjects and objects)
-        #         # shape of po_scores is (batch_size, Nb_entities in entire dataset)
-        #         po_scores = model.forward(dev_xp_batch_emb, None, dev_xo_batch_emb)
-        #         non_b_idx = [i for i in range(po_scores.shape[1]) if i != data.entity_to_idx['B']]
-        #         dev_xs_batch_b_removed = torch.where(dev_xs_batch > data.entity_to_idx['B'], dev_xs_batch - 1, dev_xs_batch)
-        #         meta_loss += loss_function(po_scores[:, non_b_idx], dev_xs_batch_b_removed)
+        #     # shape of sp_scores is (batch_size, Nb_entities in entire dataset)
+        #     sp_scores = model.forward(dev_xp_batch_emb, dev_xs_batch_emb, None)
+        #     dev_xo_batch_b_removed = torch.where(dev_xo_batch > data.entity_to_idx['B'], dev_xo_batch - 1, dev_xo_batch)
+        #     meta_loss += loss_function(sp_scores[:, non_b_idx],
+        #                                dev_xo_batch_b_removed)
         #
-        #         # shape of sp_scores is (batch_size, Nb_entities in entire dataset)
-        #         sp_scores = model.forward(dev_xp_batch_emb, dev_xs_batch_emb, None)
-        #         dev_xo_batch_b_removed = torch.where(dev_xo_batch > data.entity_to_idx['B'], dev_xo_batch - 1, dev_xo_batch)
-        #         meta_loss += loss_function(sp_scores[:, non_b_idx],
-        #                                    dev_xo_batch_b_removed)
         #
-        #         # compute gradient for outer-loop
-        #         meta_loss.backward()
+        #     # compute gradient for outer-loop
+        #     meta_loss.backward()
         #
-        #         optimizer_outer.step()
-        #         optimizer_outer.zero_grad()
+        #     optimizer_outer.step()
+        #     optimizer_outer.zero_grad()
         #
-        #         # store loss
-        #         batch_meta_loss_values += [meta_loss.item()]
+        #     # store loss
+        #     batch_meta_loss_values += [meta_loss.item()]
 
 
     # logger.info("Training finished")
 
     print("\nTraining finished\n")
 
+    print(f"START params: {parameters_lst}")
     print(f"FINAL params: {parameters_lst_lh}")
+    # print(f"FINAL params: {[param for param in parameters_lst.parameters()]}")
+    print(parameters_lst_lh[0][1])
     print(f"FINAL reg param value, p: {reg_param.weight}") # todo make sure this returns the updated and not initialised value
     print(f"FINAL reg term: {p_target_regularizer(parameters_lst_lh[0][1], reg_param.weight)}")
 
     print(f"\nstarting loss: {mean_losses[0]}")
     print(f"final loss: {mean_losses[-1]}")
 
-    print(f"\nstarting meta loss: {meta_losses[0]}")
-    print(f"final meta loss: {meta_losses[-1]}")
+    # print(f"FINAL predicate embeddings: {predicate_embeddings.weight}")
+    # print(f"FINAL reg param value, p: {reg_param.weight}")
+    # print(f"FINAL reg term: {p_target_regularizer(entity_embeddings.weight[1], reg_param.weight)}")
 
-    plt.plot(meta_losses)
-    plt.plot(reg_param_values_lst)
-    plt.plot(embedding_of_B)
-    plt.plot(embedding_of_C)
-    plt.xlabel("Outer steps")
-    plt.ylabel("Value as specified in legend")
-    plt.title(f"Seed: {seed} | epochs: {nb_epochs} | LR: {learning_rate} | outerLR: {learning_rate_outer} | outer steps: {outer_steps} |\noptim: {optimizer_name} | model: {model_name}")
-    plt.legend([f"Meta-loss: {meta_loss_type}", "Reg param value", "Embedding of B", "Embedding of C"], loc='center right')
-    plt.show()
+    # print(f"FINAL entity embeddings: {entity_embeddings.weight}")
+    # print(f"FINAL predicate embeddings: {predicate_embeddings.weight}")
+    # print(f"FINAL reg param value, p: {reg_param.weight}")
+    # print(f"FINAL reg term: {p_target_regularizer(entity_embeddings.weight[1], reg_param.weight)}")
 
 if __name__ == '__main__':
 
     # Specify experimental parameters
-    TRAIN_DIR = "./data/toy/train.tsv"
-    DEV_DIR = "./data/toy/dev.tsv"
+    TRAIN_DIR = "../data/toy/train.tsv"
+    DEV_DIR = "../data/toy/dev.tsv"
     TEST_DIR = None  # "./data/toy/dev.tsv"
     MODEL = "distmult"
-    EMBEDDING_SIZE = 1
+    EMBEDDING_SIZE = 2
     BATCH_SIZE = 2
-    EPOCHS = 30
-    OUTER_STEPS = 150
-    LEARNING_RATE = 0.2
-    LEARNING_RATE_OUTER = 0.05
-    META_LOSS_TYPE = "||B-C||"
-    OPTIMIZER = "adam"
-    OPTIMIZER_OUTER = "adam"
+    EPOCHS = 200
+    OUTER_STEPS = 1
+    LEARNING_RATE = 0.1
+    LEARNING_RATE_OUTER = 0.01
+    OPTIMIZER = "adagrad"
+    OPTIMIZER_OUTER = "adagrad"
     REGULARIZER = "p_target"
     INPUT_TYPE = "standard"
-    SEED = 2
+    SEED = 4
     QUIET = True
 
     main()
