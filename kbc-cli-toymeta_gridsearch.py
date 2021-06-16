@@ -301,7 +301,7 @@ if __name__ == '__main__':
     LEARNING_RATE = 0.5
     OPTIMIZER = "adagrad"
     INPUT_TYPE = "standard"
-    META_LOSS_TYPE = "||B-C||"  # cross-entropy or ||B-C||
+    META_LOSS_TYPE = "cross-entropy"  # cross-entropy or ||B-C||
     SEED = 6
     QUIET = True
 

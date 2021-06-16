@@ -130,19 +130,18 @@ def main():
     loss_function = nn.CrossEntropyLoss(reduction='mean')
 
     # outer loop
+
     meta_losses = []
     reg_param_values_lst = []
     embedding_of_B = []
     embedding_of_C = []
+    e_tensor_lh = entity_embeddings.weight
+    p_tensor_lh = predicate_embeddings.weight
+
     for outer_step in range(outer_steps):
         # inner loop
-
         mean_losses = []
         with higher.innerloop_ctx(model, optimizer, device=device, track_higher_grads=True) as (fmodel, diffopt):
-
-            e_tensor_lh = entity_embeddings.weight
-            p_tensor_lh = predicate_embeddings.weight
-            parameters_lst_lh = [e_tensor_lh, p_tensor_lh]
 
             for epoch_no in range(1, nb_epochs + 1):
                 train_log = {}  # dictionary to store training metrics for uploading to wandb for each epoch
@@ -154,6 +153,8 @@ def main():
 
                 for batch_no, (batch_start, batch_end) in enumerate(batcher.batches, 1):
                     # model.train()  # model in training mode
+
+                    parameters_lst_lh = [e_tensor_lh, p_tensor_lh]
 
                     # Size [B] numpy arrays containing indices of each subject_entity, predicate, and object_entity in the batch
                     xp_batch, xs_batch, xo_batch, xi_batch = batcher.get_batch(batch_start, batch_end)
@@ -191,7 +192,7 @@ def main():
                     epoch_loss_values += [loss_value]
 
                     e_tensor_lh, p_tensor_lh = diffopt.step(loss, params=parameters_lst_lh)
-                    parameters_lst_lh = [e_tensor_lh, p_tensor_lh]
+                    # parameters_lst_lh = [e_tensor_lh, p_tensor_lh]
 
                     if not is_quiet:
                         # logger.info(f'Epoch {epoch_no}/{nb_epochs}\tBatch {batch_no}/{nb_batches}\tLoss {loss_value:.6f} ({loss_nonreg_value:.6f})')
@@ -211,7 +212,7 @@ def main():
             embedding_of_B += [parameters_lst_lh[0][1].detach().clone().item()]
             embedding_of_C += [parameters_lst_lh[0][2].detach().clone().item()]
 
-            meta_loss.backward()
+            meta_loss.backward(retain_graph=True)
             optimizer_outer.step()
 
             temp_debug=0
@@ -295,9 +296,9 @@ if __name__ == '__main__':
     MODEL = "distmult"
     EMBEDDING_SIZE = 1
     BATCH_SIZE = 2
-    EPOCHS = 30
-    OUTER_STEPS = 150
-    LEARNING_RATE = 0.2
+    EPOCHS = 20
+    OUTER_STEPS = 40
+    LEARNING_RATE = 0.1
     LEARNING_RATE_OUTER = 0.05
     META_LOSS_TYPE = "||B-C||"
     OPTIMIZER = "adam"
