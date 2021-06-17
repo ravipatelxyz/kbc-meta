@@ -130,14 +130,11 @@ def main():
     embedding_of_B = []
     embedding_of_C = []
 
-    e_tensor_lh = entity_embeddings.weight
-    p_tensor_lh = predicate_embeddings.weight
-    parameters_lst_lh = [e_tensor_lh, p_tensor_lh]
-
     for outer_step in range(outer_steps):
         # inner loop
         mean_losses = []
 
+        parameters_lst_lh = [entity_embeddings.weight, predicate_embeddings.weight]
         diffopt = higher.get_diff_optim(optimizer, parameters_lst_lh, track_higher_grads=True)
         for epoch_no in range(1, nb_epochs + 1):
             train_log = {}  # dictionary to store training metrics for uploading to wandb for each epoch
@@ -165,13 +162,13 @@ def main():
 
                 # "sp" corruption applied here (i.e. loss calculated based on model predications for subjects and objects)
                 # shape of po_scores is (batch_size, Nb_entities in entire dataset)
-                po_scores = model.forward(xp_batch_emb, None, xo_batch_emb, entity_embeddings=e_tensor_lh, predicate_embeddings=p_tensor_lh)
+                po_scores = model.forward(xp_batch_emb, None, xo_batch_emb, entity_embeddings=entity_embeddings.weight, predicate_embeddings=predicate_embeddings.weight)
                 non_c_idx = [i for i in range(po_scores.shape[1]) if i != data.entity_to_idx['C']]
                 xs_batch_c_removed = torch.where(xs_batch > data.entity_to_idx['C'], xs_batch-1, xs_batch)
                 loss += loss_function(po_scores[:, non_c_idx], xs_batch_c_removed)  # train loss ignoring <A,r,C> terms
 
                 # shape of sp_scores is (batch_size, Nb_entities in entire dataset)
-                sp_scores = model.forward(xp_batch_emb, xs_batch_emb, None, entity_embeddings=e_tensor_lh, predicate_embeddings=p_tensor_lh)
+                sp_scores = model.forward(xp_batch_emb, xs_batch_emb, None, entity_embeddings=entity_embeddings.weight, predicate_embeddings=predicate_embeddings.weight)
                 xo_batch_c_removed = torch.where(xo_batch > data.entity_to_idx['C'], xo_batch - 1, xo_batch)
                 loss += loss_function(sp_scores[:, non_c_idx], xo_batch_c_removed)  # train loss ignoring <A,r,C> terms
 
@@ -185,13 +182,15 @@ def main():
                 loss_value = loss.item()
                 epoch_loss_values += [loss_value]
 
-                e_tensor_lh, p_tensor_lh = diffopt.step(loss, params=parameters_lst_lh)
+                e_tensor, p_tensor = diffopt.step(loss, params=parameters_lst_lh)
+                entity_embeddings.weight = torch.nn.Parameter(e_tensor)
+                predicate_embeddings.weight = torch.nn.Parameter(p_tensor)
 
                 if not is_quiet:
                     # logger.info(f'Epoch {epoch_no}/{nb_epochs}\tBatch {batch_no}/{nb_batches}\tLoss {loss_value:.6f} ({loss_nonreg_value:.6f})')
                     print(f'Epoch {epoch_no}/{nb_epochs}\tBatch {batch_no}/{nb_batches}\tLoss {loss_value:.6f} ({loss_nonreg_value:.6f})')
 
-                parameters_lst_lh = [e_tensor_lh, p_tensor_lh]
+                parameters_lst_lh = [entity_embeddings.weight, predicate_embeddings.weight]
 
             loss_mean, loss_std = np.mean(epoch_loss_values), np.std(epoch_loss_values)
             mean_losses += [loss_mean]
@@ -209,6 +208,7 @@ def main():
 
             meta_loss.backward()
             optimizer_outer.step()
+            optimizer.zero_grad()
             optimizer_outer.zero_grad()
 
             temp_debug=0
@@ -241,12 +241,12 @@ def main():
 if __name__ == '__main__':
 
     # Specify experimental parameters
-    TRAIN_DIR = "./data/toy/train_single.tsv"  # train_single.tsv contains <A,r,B>, train.tsv contains <A,r,B> and <B,r,D>
-    DEV_DIR = "./data/toy/dev.tsv"  # dev.tsv contains <A,r,C>
+    TRAIN_DIR = "../data/toy/train_single.tsv"  # train_single.tsv contains <A,r,B>, train.tsv contains <A,r,B> and <B,r,D>
+    DEV_DIR = "../data/toy/dev.tsv"  # dev.tsv contains <A,r,C>
     TEST_DIR = None  # "./data/toy/dev.tsv"
     MODEL = "distmult"
     EMBEDDING_SIZE = 1
-    BATCH_SIZE = 2
+    BATCH_SIZE = 1
     EPOCHS = 40
     OUTER_STEPS = 100
     LEARNING_RATE = 0.02
