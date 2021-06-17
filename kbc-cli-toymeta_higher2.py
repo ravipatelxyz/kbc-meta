@@ -130,13 +130,14 @@ def main():
     embedding_of_B = []
     embedding_of_C = []
 
+    e_tensor_lh = entity_embeddings.weight
+    p_tensor_lh = predicate_embeddings.weight
+    parameters_lst_lh = [e_tensor_lh, p_tensor_lh]
+
     for outer_step in range(outer_steps):
         # inner loop
         mean_losses = []
 
-        e_tensor_lh = entity_embeddings.weight
-        p_tensor_lh = predicate_embeddings.weight
-        parameters_lst_lh = [e_tensor_lh, p_tensor_lh]
         diffopt = higher.get_diff_optim(optimizer, parameters_lst_lh, track_higher_grads=True)
 
         for epoch_no in range(1, nb_epochs + 1):
