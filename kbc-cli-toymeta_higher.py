@@ -66,12 +66,6 @@ def main():
 
     print(data.entity_to_idx)  # {'A': 0, 'B': 1, 'C': 2, 'D': 3}
 
-    # the .dev_triples attributes here contain ID strings
-    triples_name_pairs = [
-        (data.dev_triples, 'dev'),
-        (data.test_triples, 'test'),
-    ]
-
     rank = embedding_size * 2 if model_name in {'complex'} else embedding_size
     init_size = 1
 
@@ -81,8 +75,8 @@ def main():
     predicate_embeddings = nn.Embedding(data.nb_predicates, rank, sparse=False).to(device)
 
     # Downscale the randomly initialised embeddings (initialised with N(0,1))
-    entity_embeddings.weight.data *= init_size
-    predicate_embeddings.weight.data *= init_size
+    # entity_embeddings.weight.data *= init_size
+    # predicate_embeddings.weight.data *= init_size
 
     parameters_lst = nn.ParameterList([entity_embeddings.weight, predicate_embeddings.weight]).to(device)
 
@@ -101,7 +95,7 @@ def main():
 
     # When this dictionary is indexed by model name, the appropriate model class will be initialised
     model_factory = {
-        'distmult': lambda: DistMult(entity_embeddings=entity_embeddings.weight, predicate_embeddings=predicate_embeddings.weight),
+        'distmult': lambda: DistMult(),
         'complex': lambda: ComplEx(entity_embeddings=entity_embeddings.weight, predicate_embeddings=predicate_embeddings.weight),
         'transe': lambda: TransE(entity_embeddings=entity_embeddings.weight, predicate_embeddings=predicate_embeddings.weight)
     }
@@ -143,6 +137,8 @@ def main():
         mean_losses = []
         with higher.innerloop_ctx(model, optimizer, device=device, track_higher_grads=True) as (fmodel, diffopt):
 
+            diffopt = optim.get_diff_optim()
+
             for epoch_no in range(1, nb_epochs + 1):
                 train_log = {}  # dictionary to store training metrics for uploading to wandb for each epoch
                 batcher = Batcher(data.Xs, data.Xp, data.Xo, batch_size, 1, random_state)
@@ -171,13 +167,13 @@ def main():
 
                     # "sp" corruption applied here (i.e. loss calculated based on model predications for subjects and objects)
                     # shape of po_scores is (batch_size, Nb_entities in entire dataset)
-                    po_scores = fmodel.forward(xp_batch_emb, None, xo_batch_emb, params=parameters_lst_lh)
+                    po_scores = fmodel.forward(xp_batch_emb, None, xo_batch_emb, entity_embeddings=e_tensor_lh, predicate_embeddings=p_tensor_lh)
                     non_c_idx = [i for i in range(po_scores.shape[1]) if i != data.entity_to_idx['C']]
                     xs_batch_c_removed = torch.where(xs_batch > data.entity_to_idx['C'], xs_batch-1, xs_batch)
                     loss += loss_function(po_scores[:, non_c_idx], xs_batch_c_removed)  # train loss ignoring <A,r,C> terms
 
                     # shape of sp_scores is (batch_size, Nb_entities in entire dataset)
-                    sp_scores = fmodel.forward(xp_batch_emb, xs_batch_emb, None, params=parameters_lst_lh)
+                    sp_scores = fmodel.forward(xp_batch_emb, xs_batch_emb, None, entity_embeddings=e_tensor_lh, predicate_embeddings=p_tensor_lh)
                     xo_batch_c_removed = torch.where(xo_batch > data.entity_to_idx['C'], xo_batch - 1, xo_batch)
                     loss += loss_function(sp_scores[:, non_c_idx], xo_batch_c_removed)  # train loss ignoring <A,r,C> terms
 
@@ -191,8 +187,7 @@ def main():
                     loss_value = loss.item()
                     epoch_loss_values += [loss_value]
 
-                    e_tensor_lh, p_tensor_lh = diffopt.step(loss, params=parameters_lst_lh)
-                    # parameters_lst_lh = [e_tensor_lh, p_tensor_lh]
+                    e_tensor_lh, p_tensor_lh = diffopt.step(loss)
 
                     if not is_quiet:
                         # logger.info(f'Epoch {epoch_no}/{nb_epochs}\tBatch {batch_no}/{nb_batches}\tLoss {loss_value:.6f} ({loss_nonreg_value:.6f})')
@@ -203,17 +198,18 @@ def main():
 
 
         if meta_loss_type == "||B-C||":
-            optimizer_outer.zero_grad()
             meta_loss = torch.norm(parameters_lst_lh[0][data.entity_to_idx['B']]
                                    - parameters_lst_lh[0][data.entity_to_idx['C']])
             # print(meta_loss)
-            meta_losses += [meta_loss.detach().clone().item()]
-            reg_param_values_lst += [reg_param.weight.detach().clone().item()]
-            embedding_of_B += [parameters_lst_lh[0][1].detach().clone().item()]
-            embedding_of_C += [parameters_lst_lh[0][2].detach().clone().item()]
+            # PLOTTING ONLY
+            # meta_losses += [meta_loss.detach().clone().item()]
+            # reg_param_values_lst += [reg_param.weight.detach().clone().item()]
+            # embedding_of_B += [parameters_lst_lh[0][1].detach().clone().item()]
+            # embedding_of_C += [parameters_lst_lh[0][2].detach().clone().item()]
 
-            meta_loss.backward(retain_graph=True)
+            meta_loss.backward()
             optimizer_outer.step()
+            optimizer_outer.zero_grad()
 
             temp_debug=0
 

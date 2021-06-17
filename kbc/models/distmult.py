@@ -34,8 +34,7 @@ class DistMult(BasePredictor):
                 arg1: Optional[Tensor],  # [B, E], subjects batch embeddings tensor
                 arg2: Optional[Tensor],  # [B, E], objects batch embeddings tensor
                 entity_embeddings: Optional[Tensor] = None,  # [Nb_entities, E]
-                predicate_embeddings: Optional[Tensor] = None,  # [Nb_preds, E]
-                *args, **kwargs) -> Tensor:
+                predicate_embeddings: Optional[Tensor] = None) -> Tensor:
 
         # Tensors of embeddings of entities and predicates for entire dataset
         # shape (total_nb_entities, rank), i.e. [Nb_entities, E]
