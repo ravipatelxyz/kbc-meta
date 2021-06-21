@@ -8,6 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from copy import deepcopy
 
+import pandas as pd
 import torch
 from torch import nn, optim
 
@@ -38,6 +39,8 @@ def main():
     outer_steps = OUTER_STEPS
     learning_rate = LEARNING_RATE
     learning_rate_outer = LEARNING_RATE_OUTER
+    meta_stopping_tol = META_STOPPING_TOL
+    save_figs = SAVE_FIGS
 
     a = torch.tensor(A, requires_grad=True)
     h = torch.tensor(H, requires_grad=True)
@@ -45,17 +48,26 @@ def main():
 
     device = torch.device('cpu')
 
-    # a_lst = nn.ParameterList([a]).to(device)
-    # p_lst = nn.ParameterList([p]).to(device)
-
     model = ToyMeta2().to(device)
 
+    # for logging / plotting
     meta_losses = []
     a_vals = []
     h_vals = []
     c_vals = []
+    check_converge_flag = True
 
     h_graph = deepcopy(h)
+
+    h_grads = []
+    # def mult_grad(grad):
+    #     return grad
+    def store_h_grad(grad):
+        h_grads.append(grad)
+
+    # h_graph.register_hook(mult_grad)
+    h_graph.register_hook(store_h_grad)
+
 
     optimizer_factory_outer = {
         'adagrad': lambda: optim.Adagrad([h_graph], lr=learning_rate_outer),
@@ -86,6 +98,9 @@ def main():
             # print(a_graph)
 
         meta_loss = torch.norm(a_graph - c)
+        if meta_loss < meta_stopping_tol and check_converge_flag == True:
+            print(f"First converged at outer step {outer_step} (total of {outer_step*inner_steps} inner steps), with tolerance {meta_stopping_tol}")
+            check_converge_flag = False
 
         # metrics for plotting
         meta_losses += [meta_loss.detach().clone().item()]
@@ -97,19 +112,39 @@ def main():
         optimizer_outer.step()
         optimizer_outer.zero_grad()
 
-    print(a_graph)
-    print(h_graph)
-    print(c)
     plt.plot(meta_losses)
     plt.plot(a_vals)
     plt.plot(h_vals)
     plt.plot(c_vals)
     plt.legend(["meta loss","a","h","c"])
-    plt.xlabel("Outer steps")
+    plt.xlabel("Outer step")
     plt.ylabel("Value as specified in legend")
     plt.title(f"Starting values: a={A}, h={H}, c={C}\nInner steps: {inner_steps} | LR: {learning_rate} | Outer steps: {outer_steps} | OuterLR: {learning_rate_outer} | Optim: {optimizer_name}")
+    plt.tight_layout()
+    if save_figs == True:
+        plt.savefig(f"./plots/toymeta2_loss_a{A}_h{H}_c{C}_is{inner_steps}_lr{learning_rate}_os{outer_steps}_outlr{learning_rate_outer}_optim{optimizer_name}.png")
     plt.show()
-    plt.savefig(f"./plots/toymeta2_a{A}_h{H}_c{C}_is{inner_steps}_lr{learning_rate}_os{outer_steps}_outlr{learning_rate_outer}_optim{optimizer_name}.png")
+
+    df_grad = pd.DataFrame(h_grads)
+    rolling_mean_grads = df_grad.rolling(window=40).mean()
+    plt.plot(rolling_mean_grads)
+    plt.title("Rolling 40-epoch mean gradient value")
+    plt.xlabel("Outer step")
+    plt.ylabel("Gradient of loss wrt hyperparameter h")
+    plt.tight_layout()
+    if save_figs == True:
+        plt.savefig(f"./plots/toymeta2_grad_rollingavg_a{A}_h{H}_c{C}_is{inner_steps}_lr{learning_rate}_os{outer_steps}_outlr{learning_rate_outer}_optim{optimizer_name}.png")
+    plt.show()
+
+    array_grads = np.array(h_grads)
+    plt.hist(np.absolute(array_grads), bins=80)
+    plt.title(f" Magnitude of hypergradient of loss wrt hyperparameter h \nMean: {np.mean(np.absolute(array_grads)):.10f} | SD: {np.std(h_grads):.10f} | Median {np.median(np.absolute(array_grads)):.10f}")
+    plt.ylabel("Frequency")
+    plt.xlabel("Hypergradient magnitude")
+    plt.tight_layout()
+    if save_figs == True:
+        plt.savefig(f"./plots/toymeta2_grad_hist_a{A}_h{H}_c{C}_is{inner_steps}_lr{learning_rate}_os{outer_steps}_outlr{learning_rate_outer}_optim{optimizer_name}.png")
+    plt.show()
 
     debug=0
 
@@ -118,14 +153,16 @@ def main():
 if __name__ == '__main__':
 
     # Specify experimental parameters
-    OUTER_STEPS = 2000
-    INNER_STEPS = 80
+    OUTER_STEPS = 100
+    INNER_STEPS = 400
     LEARNING_RATE = 0.01
-    LEARNING_RATE_OUTER = 0.005
+    LEARNING_RATE_OUTER = 0.01
     OPTIMIZER = "adam"
-    OPTIMIZER_OUTER = OPTIMIZER
-    A = 0.45
-    H = 0.48
-    C = 0.71
+    OPTIMIZER_OUTER = "adam"
+    SAVE_FIGS = False
+    META_STOPPING_TOL = 0.02
+    A = 0.25
+    H = 0.28
+    C = 0.51
 
     main()
