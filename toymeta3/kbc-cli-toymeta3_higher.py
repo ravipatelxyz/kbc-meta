@@ -34,10 +34,11 @@ class ToyMeta2(nn.Module):
 def parse_args(argv):
     parser = argparse.ArgumentParser('KBC Research', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
-    # a,h,c starting vals
+    # a,b,c,h starting vals
     parser.add_argument('--a', action='store', required=True, type=float)
-    parser.add_argument('--h', action='store', required=True, type=float)
+    parser.add_argument('--b', action='store', required=True, type=float)
     parser.add_argument('--c', action='store', required=True, type=float)
+    parser.add_argument('--h', action='store', required=True, type=float)
 
     # inner loop
     parser.add_argument('--optimizer', '-oi', action='store', type=str, default='adam',
@@ -66,8 +67,9 @@ def main(argv):
     Outer optimisation: min_h ||a-c||, with c set to a fixed value
     """
     a = torch.tensor(args.a, requires_grad=True)
-    h = torch.tensor(args.h, requires_grad=True)
+    b = torch.tensor(args.b, requires_grad=False)
     c = torch.tensor(args.c, requires_grad=False)
+    h = torch.tensor(args.h, requires_grad=True)
     inner_steps = args.inner_steps
     outer_steps = args.outer_steps
     learning_rate = args.learning_rate
@@ -80,7 +82,7 @@ def main(argv):
 
     # logging
     if use_wandb == True:
-        wandb.init(entity="uclnlp", project="kbc_meta", group=f"toymeta2")
+        wandb.init(entity="uclnlp", project="kbc_meta", group=f"toymeta3")
         wandb.config.update(args)
 
     device = torch.device('cpu')
@@ -91,8 +93,9 @@ def main(argv):
     # for logging / plotting
     meta_losses = []
     a_vals = []
-    h_vals = []
+    b_vals = []
     c_vals = []
+    h_vals = []
     converged = False
     convergence_outer_step = None
     convergence_total_steps = None
@@ -119,26 +122,28 @@ def main(argv):
     # outer loop min_h ||a-c||
     for outer_step in range(outer_steps):
 
-        # Parameter a setup
+        # Parameter setup
         a_graph = deepcopy(a)
+        b_graph = deepcopy(b)
+        c_graph = deepcopy(c)
+        params = [a_graph, b_graph, c_graph]
 
         optimizer_factory = {
-            'adagrad': lambda: optim.Adagrad([a_graph], lr=learning_rate),
-            'adam': lambda: optim.Adam([a_graph], lr=learning_rate),
-            'sgd': lambda: optim.SGD([a_graph], lr=learning_rate)
+            'adagrad': lambda: optim.Adagrad(params, lr=learning_rate),
+            'adam': lambda: optim.Adam(params, lr=learning_rate),
+            'sgd': lambda: optim.SGD(params, lr=learning_rate)
         }
 
         optimizer = optimizer_factory[optimizer_name]()
 
-        diffopt = higher.get_diff_optim(optimizer, [a_graph], track_higher_grads=True)
+        diffopt = higher.get_diff_optim(optimizer, params, track_higher_grads=True)
 
         # inner loop  min_a ||a-h||
         for inner_step in range(inner_steps):
-            loss = torch.norm(model.forward(a_graph) - h_graph)
-            a_graph = diffopt.step(loss, params=[a_graph])
-            a_graph = a_graph[0]
+            loss = torch.norm(-model.forward(params) + h_graph*) # todo finish loss
+            params = diffopt.step(loss, params=params)
 
-        # logging
+        # logging todo here onwards
         meta_loss = torch.norm(a_graph - c)
         if meta_loss < stopping_tol_outer:
             if converged == False:
