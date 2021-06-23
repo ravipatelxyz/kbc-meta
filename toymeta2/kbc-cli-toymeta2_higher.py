@@ -223,19 +223,21 @@ def main(argv):
     # plt.show()
 
     if use_wandb == True:
-        train_log.update({'convergence_outer_step': convergence_outer_step,
-                          'convergence_total_steps': convergence_total_steps,
-                          'convergence_nb_outersteps_within_tol': steps_in_convergence_tol,
-                          'convergence_proportion_outersteps_sustained_within_tol': (steps_in_convergence_tol)/(outer_steps-convergence_outer_step),
-                          'convergence_nb_outersteps_post_convergence': outer_steps-convergence_outer_step,
+        train_log.update({'convergence_nb_outersteps_within_tol': steps_in_convergence_tol,
                           'hypergrad_mean_magnitude': np.mean(np.absolute(array_grads)),
                           'hypergrad_SD': np.std(h_grads),
                           'hypergrad_normalizedSD': np.std(h_grads)/np.mean(np.absolute(array_grads)),
                           'hypergrad_median_magnitude': np.median(np.absolute(array_grads)),
                           'hypergrad_IQR': np.percentile(array_grads, 75) - np.percentile(array_grads, 25),
                           'hypergrad_normalizedIQR': (np.percentile(array_grads, 75) - np.percentile(array_grads, 25)) / np.median(np.absolute(array_grads))})
+        if convergence_outer_step != None:
+            train_log.update({'convergence_outer_step': convergence_outer_step,
+                              'convergence_total_steps': convergence_total_steps,
+                              'convergence_proportion_outersteps_sustained_within_tol': (steps_in_convergence_tol) / (outer_steps - convergence_outer_step),
+                              'convergence_nb_outersteps_post_convergence': outer_steps - convergence_outer_step})
+
         wandb.run.summary.update(train_log)
-    wandb.finish()
+        wandb.finish()
 
 
 if __name__ == '__main__':

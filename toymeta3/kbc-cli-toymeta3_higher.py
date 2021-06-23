@@ -27,8 +27,9 @@ class ToyMeta2(nn.Module):
     def __init__(self):
         super().__init__()
 
-    def forward(self, tensor_a):
-        return tensor_a
+    def forward(self, tensor_a, tensor_b, tensor_c):
+        score = torch.dot(tensor_a, tensor_b) + torch.dot(tensor_b, tensor_c)
+        return score
 
 
 def parse_args(argv):
@@ -62,14 +63,14 @@ def parse_args(argv):
 
 def main(argv):
     """
-    Model: Single parameter a that it returns
-    Inner optimisation: min_a ||a-h||, with a the single model parameter, h being a hyperparameter
-    Outer optimisation: min_h ||a-c||, with c set to a fixed value
+    Model:
+    Inner optimisation:
+    Outer optimisation:
     """
-    a = torch.tensor(args.a, requires_grad=True)
-    b = torch.tensor(args.b, requires_grad=False)
-    c = torch.tensor(args.c, requires_grad=False)
-    h = torch.tensor(args.h, requires_grad=True)
+    a = torch.tensor([args.a], requires_grad=True)
+    b = torch.tensor([args.b], requires_grad=True)
+    c = torch.tensor([args.c], requires_grad=True)
+    h = torch.tensor([args.h], requires_grad=True)
     inner_steps = args.inner_steps
     outer_steps = args.outer_steps
     learning_rate = args.learning_rate
@@ -121,31 +122,34 @@ def main(argv):
 
     # outer loop min_h ||a-c||
     for outer_step in range(outer_steps):
+        print(f"Outer step: {outer_step}")
 
         # Parameter setup
         a_graph = deepcopy(a)
         b_graph = deepcopy(b)
         c_graph = deepcopy(c)
-        params = [a_graph, b_graph, c_graph]
 
         optimizer_factory = {
-            'adagrad': lambda: optim.Adagrad(params, lr=learning_rate),
-            'adam': lambda: optim.Adam(params, lr=learning_rate),
-            'sgd': lambda: optim.SGD(params, lr=learning_rate)
+            'adagrad': lambda: optim.Adagrad([a_graph, b_graph, c_graph], lr=learning_rate),
+            'adam': lambda: optim.Adam([a_graph, b_graph, c_graph], lr=learning_rate),
+            'sgd': lambda: optim.SGD([a_graph, b_graph, c_graph], lr=learning_rate)
         }
 
         optimizer = optimizer_factory[optimizer_name]()
 
-        diffopt = higher.get_diff_optim(optimizer, params, track_higher_grads=True)
+        diffopt = higher.get_diff_optim(optimizer, [a_graph, b_graph, c_graph], track_higher_grads=True)
 
         # inner loop  min_a ||a-h||
         for inner_step in range(inner_steps):
-            loss = torch.norm(-model.forward(params) + h_graph*) # todo finish loss
-            params = diffopt.step(loss, params=params)
+            loss = -model.forward(a_graph, b_graph, c_graph) + h_graph * (
+                        torch.dot(a_graph, a_graph) + 2 * torch.dot(b_graph, b_graph) + torch.dot(c_graph,
+                                                                                                  c_graph))
+            a_graph, b_graph, c_graph = diffopt.step(loss, params=[a_graph, b_graph, c_graph])
+            # params = [a_graph, b_graph, c_graph]
 
-        # logging todo here onwards
-        meta_loss = torch.norm(a_graph - c)
-        if meta_loss < stopping_tol_outer:
+        # logging
+        meta_loss = -torch.dot(a_graph, c_graph)
+        if h_graph-0.5 < stopping_tol_outer:
             if converged == False:
                 convergence_outer_step = outer_step
                 convergence_total_steps = outer_step * inner_steps
@@ -155,8 +159,9 @@ def main(argv):
 
         meta_losses += [meta_loss.detach().clone().item()]
         a_vals += [a_graph.detach().clone().item()]
+        b_vals += [b_graph.detach().clone().item()]
+        c_vals += [c_graph.detach().clone().item()]
         h_vals += [h_graph.detach().clone().item()]
-        c_vals += [c.detach().clone().item()]
 
         # Backprop grad of outer loss wrt h
         meta_loss.backward()
@@ -165,9 +170,10 @@ def main(argv):
         if use_wandb == True:
             train_log = {'meta_loss': meta_losses[-1],
                          'a_value': a_vals[-1],
-                         'h_value': h_vals[-1],
+                         'b_value': b_vals[-1],
                          'c_value': c_vals[-1],
-                         'outer_convergence_value': np.absolute(h_vals[-1] - c_vals[-1]),
+                         'h_value': h_vals[-1],
+                         'outer_convergence_value': np.absolute(h_vals[-1] - 0.5),
                          'hypergradient_h': h_grads[-1]}
             wandb.log(train_log, step=outer_step)
 
@@ -176,27 +182,29 @@ def main(argv):
         optimizer_outer.zero_grad()
 
     plt.figure(1)
-    plt.plot(meta_losses)
+    # plt.plot(meta_losses)
     plt.plot(a_vals)
-    plt.plot(h_vals)
+    plt.plot(b_vals)
     plt.plot(c_vals)
-    plt.legend(["meta loss", "a", "h", "c"])
+    plt.plot(h_vals)
+    plt.plot([0.5 for i in range(outer_steps)])
+    plt.legend(["a", "b", "c", "h", "h_target"])
     plt.xlabel("Outer step")
     plt.ylabel("Value as specified in legend")
     plt.title(
-        f"Starting values: a={args.a}, h={args.h}, c={args.c}\nInner steps: {inner_steps} | LR: {learning_rate} | Outer steps: {outer_steps} | OuterLR: {learning_rate_outer} \nOptim: {optimizer_name} | Converges step: {convergence_outer_step} | Converges total steps: {convergence_total_steps}")
+        f"Starting values: a={args.a}, b={args.b},  c={args.c}, h={args.h}\nInner steps: {inner_steps} | LR: {learning_rate} | Outer steps: {outer_steps} | OuterLR: {learning_rate_outer} \nOptim: {optimizer_name} | Converges step: {convergence_outer_step} | Converges total steps: {convergence_total_steps}")
     plt.tight_layout()
     if save_figs == True:
-        filename = f"toymeta2_loss_a{args.a}_h{args.h}_c{args.c}_is{inner_steps}_lr{learning_rate}_os{outer_steps}_outlr{learning_rate_outer}_optim{optimizer_name}.png"
+        filename = f"toymeta3_loss_a{args.a}_b{args.b}_c{args.c}_h{args.h}_is{inner_steps}_lr{learning_rate}_os{outer_steps}_outlr{learning_rate_outer}_optim{optimizer_name}.png"
         if use_wandb == True:
             plt.savefig(os.path.join(wandb.run.dir, filename))
         else:
             plt.savefig(f"./toymeta2/plots/{filename}")
 
-    # plt.show()
+    plt.show()
 
     df_grad = pd.DataFrame(h_grads)
-    rolling_mean_grads = df_grad.rolling(window=40).mean()
+    rolling_mean_grads = df_grad.rolling(window=10).mean()
     plt.figure(2)
     plt.plot(rolling_mean_grads)
     plt.title("Rolling 40-epoch mean gradient value")
@@ -204,12 +212,12 @@ def main(argv):
     plt.ylabel("Gradient of loss wrt hyperparameter h")
     plt.tight_layout()
     if save_figs == True:
-        filename = f"toymeta2_grad_rollingavg_a{args.a}_h{args.h}_c{args.c}_is{inner_steps}_lr{learning_rate}_os{outer_steps}_outlr{learning_rate_outer}_optim{optimizer_name}.png"
+        filename = f"toymeta3_grad_rollingavg_a{args.a}_b{args.b}_c{args.c}_h{args.h}_is{inner_steps}_lr{learning_rate}_os{outer_steps}_outlr{learning_rate_outer}_optim{optimizer_name}.png"
         if use_wandb == True:
             plt.savefig(os.path.join(wandb.run.dir, filename))
         else:
             plt.savefig(f"./toymeta2/plots/{filename}")
-    # plt.show()
+    plt.show()
 
     array_grads = np.array(h_grads)
     plt.figure(3)
@@ -220,28 +228,42 @@ def main(argv):
     plt.xlabel("Hypergradient magnitude")
     plt.tight_layout()
     if save_figs == True:
-        filename = f"toymeta2_grad_gradhist_a{args.a}_h{args.h}_c{args.c}_is{inner_steps}_lr{learning_rate}_os{outer_steps}_outlr{learning_rate_outer}_optim{optimizer_name}.png"
+        filename = f"toymeta3_grad_gradhist_a{args.a}_b{args.b}_c{args.c}_h{args.h}_is{inner_steps}_lr{learning_rate}_os{outer_steps}_outlr{learning_rate_outer}_optim{optimizer_name}.png"
         if use_wandb == True:
             plt.savefig(os.path.join(wandb.run.dir, filename))
         else:
             plt.savefig(f"./toymeta2/plots/{filename}")
-    # plt.show()
+    plt.show()
 
     if use_wandb == True:
-        train_log.update({'convergence_outer_step': convergence_outer_step,
-                          'convergence_total_steps': convergence_total_steps,
-                          'convergence_nb_outersteps_within_tol': steps_in_convergence_tol,
-                          'convergence_proportion_outersteps_sustained_within_tol': (steps_in_convergence_tol)/(outer_steps-convergence_outer_step),
-                          'convergence_nb_outersteps_post_convergence': outer_steps-convergence_outer_step,
+        train_log.update({'convergence_nb_outersteps_within_tol': steps_in_convergence_tol,
                           'hypergrad_mean_magnitude': np.mean(np.absolute(array_grads)),
                           'hypergrad_SD': np.std(h_grads),
-                          'hypergrad_normalizedSD': np.std(h_grads)/np.mean(np.absolute(array_grads)),
+                          'hypergrad_normalizedSD': np.std(h_grads) / np.mean(np.absolute(array_grads)),
                           'hypergrad_median_magnitude': np.median(np.absolute(array_grads)),
                           'hypergrad_IQR': np.percentile(array_grads, 75) - np.percentile(array_grads, 25),
-                          'hypergrad_normalizedIQR': (np.percentile(array_grads, 75) - np.percentile(array_grads, 25)) / np.median(np.absolute(array_grads))})
+                          'hypergrad_normalizedIQR': (np.percentile(array_grads, 75) - np.percentile(array_grads,
+                                                                                                     25)) / np.median(
+                              np.absolute(array_grads))})
+        if convergence_outer_step != None:
+            train_log.update({'convergence_outer_step': convergence_outer_step,
+                              'convergence_total_steps': convergence_total_steps,
+                              'convergence_proportion_outersteps_sustained_within_tol': (steps_in_convergence_tol) / (
+                                          outer_steps - convergence_outer_step),
+                              'convergence_nb_outersteps_post_convergence': outer_steps - convergence_outer_step})
         wandb.run.summary.update(train_log)
-    wandb.finish()
+        wandb.finish()
 
+    print({'params': [a_graph, b_graph, c_graph],
+           'h_val': h_graph.item(),
+           'convergence_nb_outersteps_within_tol': steps_in_convergence_tol,
+           'hypergrad_mean_magnitude': np.mean(np.absolute(array_grads)),
+           'hypergrad_SD': np.std(h_grads),
+           'hypergrad_normalizedSD': np.std(h_grads) / np.mean(np.absolute(array_grads)),
+           'hypergrad_median_magnitude': np.median(np.absolute(array_grads)),
+           'hypergrad_IQR': np.percentile(array_grads, 75) - np.percentile(array_grads, 25),
+           'hypergrad_normalizedIQR': (np.percentile(array_grads, 75) - np.percentile(array_grads, 25)) / np.median(
+               np.absolute(array_grads))})
 
 if __name__ == '__main__':
     args = parse_args(sys.argv[1:])
