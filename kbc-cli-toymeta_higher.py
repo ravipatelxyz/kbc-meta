@@ -75,8 +75,8 @@ def main():
     predicate_embeddings = nn.Embedding(data.nb_predicates, rank, sparse=False).to(device)
 
     # Downscale the randomly initialised embeddings (initialised with N(0,1))
-    # entity_embeddings.weight.data *= init_size
-    # predicate_embeddings.weight.data *= init_size
+    entity_embeddings.weight.data *= init_size
+    predicate_embeddings.weight.data *= init_size
 
     parameters_lst = nn.ParameterList([entity_embeddings.weight, predicate_embeddings.weight]).to(device)
 
@@ -87,7 +87,7 @@ def main():
     # Specify regularization term
     if regularizer == "p_target":
         reg_param = nn.Embedding(1, rank).to(device)
-        # reg_param.weight.data *= init_size
+        reg_param.weight.data *= init_size
         print(f"STARTING reg param value, p: {reg_param.weight}")
         print(f"STARTING reg term, ||B-C||: {p_target_regularizer(entity_embeddings.weight[1], reg_param.weight)}")
 
