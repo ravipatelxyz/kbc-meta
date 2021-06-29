@@ -119,6 +119,7 @@ def main(argv):
     # outer loop min_h ||a-c||
     for outer_step in range(outer_steps):
 
+        print(f"Outer step: {outer_step}")
         # Parameter a setup
         a_graph = deepcopy(a)
 
@@ -187,14 +188,14 @@ def main(argv):
             plt.savefig(os.path.join(wandb.run.dir, filename))
         else:
             plt.savefig(f"./toymeta2/plots/{filename}")
-
-    # plt.show()
+    plt.show()
 
     df_grad = pd.DataFrame(h_grads)
-    rolling_mean_grads = df_grad.rolling(window=40).mean()
+    window=1
+    rolling_mean_grads = df_grad.rolling(window=window).mean()
     plt.figure(2)
     plt.plot(rolling_mean_grads)
-    plt.title("Rolling 40-epoch mean gradient value")
+    plt.title(f"Rolling {window}-step mean gradient value")
     plt.xlabel("Outer step")
     plt.ylabel("Gradient of loss wrt hyperparameter h")
     plt.tight_layout()
@@ -204,7 +205,7 @@ def main(argv):
             plt.savefig(os.path.join(wandb.run.dir, filename))
         else:
             plt.savefig(f"./toymeta2/plots/{filename}")
-    # plt.show()
+    plt.show()
 
     array_grads = np.array(h_grads)
     plt.figure(3)
@@ -220,7 +221,7 @@ def main(argv):
             plt.savefig(os.path.join(wandb.run.dir, filename))
         else:
             plt.savefig(f"./toymeta2/plots/{filename}")
-    # plt.show()
+    plt.show()
 
     if use_wandb == True:
         train_log.update({'convergence_nb_outersteps_within_tol': steps_in_convergence_tol,
