@@ -6,16 +6,18 @@ import os
 from copy import deepcopy
 
 import argparse
+from typing import List, Tuple
 
 import multiprocessing
 
 import higher
 import numpy as np
+import matplotlib.pyplot as plt
 
 import torch
-from torch import nn, optim
+from torch import nn, optim, Tensor
 
-from kbc.util import is_torch_tpu_available, set_seed
+from kbc.util import is_torch_tpu_available, set_seed, make_batches
 
 from kbc.training.data import Data
 from kbc.training.batcher import Batcher
@@ -41,6 +43,46 @@ def metrics_to_str(metrics):
 
     return f'MRR {metrics["MRR"]:.6f}' + ''.join([m(i) for i in [1, 3, 5, 10, 20, 50, 100]])
 
+
+def get_unreg_loss(xs_batch: Tensor,
+                 xp_batch: Tensor,
+                 xo_batch: Tensor,
+                 corruption: str,
+                 entity_embeddings: Tensor,
+                 predicate_embeddings: Tensor,
+                 model,
+                 loss_function: nn.CrossEntropyLoss) -> Tuple[Tensor, List[Tensor]]:
+
+    # Return embeddings for each s, p, o in the batch
+    # This returns tensors of shape (batch_size, rank)
+    xp_batch_emb = predicate_embeddings[xp_batch]
+    xs_batch_emb = entity_embeddings[xs_batch]
+    xo_batch_emb = entity_embeddings[xo_batch]
+
+    loss = 0.0
+
+    # If corruption="spo", then loss will be calculate based on predicting subjects, predicates, and objects
+    # If corruption="sp", then loss will be calculate based on just predicting subjects and objects
+    if 's' in corruption:
+        # shape of po_scores is (batch_size, Nb_preds in entire dataset)
+        po_scores = model.forward(xp_batch_emb, None, xo_batch_emb, entity_embeddings=entity_embeddings, predicate_embeddings=predicate_embeddings)
+        loss += loss_function(po_scores, xs_batch)
+
+    if 'o' in corruption:
+        # shape of sp_scores is (batch_size, Nb_entities in entire dataset)
+        sp_scores = model.forward(xp_batch_emb, xs_batch_emb, None, entity_embeddings=entity_embeddings, predicate_embeddings=predicate_embeddings)
+        loss += loss_function(sp_scores, xo_batch)
+
+    if 'p' in corruption:
+        # shape of so_scores is (batch_size, Nb_entities in entire dataset)
+        so_scores = model.forward(None, xs_batch_emb, xo_batch_emb, entity_embeddings=entity_embeddings, predicate_embeddings=predicate_embeddings)
+        loss += loss_function(so_scores, xp_batch)
+
+    factors = [model.factor(e) for e in [xp_batch_emb, xs_batch_emb, xo_batch_emb]]
+
+    return loss, factors
+
+
 def parse_args(argv):
     parser = argparse.ArgumentParser('KBC Research', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
@@ -63,6 +105,7 @@ def parse_args(argv):
     parser.add_argument('--optimizer', '-o', action='store', type=str, default='adagrad',
                         choices=['adagrad', 'adam', 'sgd'])
     parser.add_argument('--regularizer', '-re', type=str, choices=["F2", "N3"], default="F2")
+    parser.add_argument('--regweight_init', '-rw', type=float, default=0.001)
     # parser.add_argument('--F2', action='store', type=float, default=None)
     # parser.add_argument('--N3', action='store', type=float, default=None)
 
@@ -110,6 +153,7 @@ def main(args):
     # F2_weight = args.F2
     # N3_weight = args.N3
     regularizer = args.regularizer
+    regweight_init = args.regweight_init
     corruption = args.corruption
     validate_every = args.validate_every
     input_type = args.input_type
@@ -186,8 +230,7 @@ def main(args):
 
     # regularizer_weights = nn.Embedding(1, 1).to(device)
     # reg_weight_graph = deepcopy(regularizer_weights.weight)
-    reg_weight_graph = torch.tensor(0.2, requires_grad=True).to(device)
-    print(reg_weight_graph)
+    reg_weight_graph = torch.tensor(regweight_init, requires_grad=True).to(device)
 
     optimizer_factory_outer = {
         'adagrad': lambda: optim.Adagrad([reg_weight_graph], lr=learning_rate_outer),
@@ -205,12 +248,18 @@ def main(args):
 
     # Specify outer loss function (cross-entropy)
 
-    outer_loss_function = nn.CrossEntropyLoss(reduction='mean')
+    loss_function_outer = nn.CrossEntropyLoss(reduction='mean')
 
     # Training loop
 
     last_logged_epoch = 0
     best_mrr = 0
+
+    losses_outer =[]
+    losses_inner_final_epoch = []
+    e_vals = []
+    p_vals = []
+    reg_weight_vals = []
 
     for outer_step in range(outer_steps):
 
@@ -230,10 +279,10 @@ def main(args):
 
         diffopt = higher.get_diff_optim(optimizer, [e_graph, p_graph], track_higher_grads=True)
 
+        losses_inner = []
         for epoch_no in range(1, nb_epochs + 1):
             train_log = {}  # dictionary to store training metrics for uploading to wandb for each epoch
             batcher = Batcher(data.Xs, data.Xp, data.Xo, batch_size, 1, random_state)
-            nb_batches = len(batcher.batches)
 
             epoch_loss_values = []  # to store loss for each batch in the epoch
             epoch_loss_nonreg_values = []
@@ -246,43 +295,21 @@ def main(args):
                 xs_batch = torch.tensor(xs_batch, dtype=torch.long, device=device)
                 xp_batch = torch.tensor(xp_batch, dtype=torch.long, device=device)
                 xo_batch = torch.tensor(xo_batch, dtype=torch.long, device=device)
-                xi_batch = torch.tensor(xi_batch, dtype=torch.long, device=device)
 
-                # Return embeddings for each s, p, o in the batch
-                # This returns tensors of shape (batch_size, rank)
-                xp_batch_emb = p_graph[xp_batch]
-                xs_batch_emb = e_graph[xs_batch]
-                xo_batch_emb = e_graph[xo_batch]
-
-                loss = 0.0
-
-                # If corruption="spo", then loss will be calculate based on predicting subjects, predicates, and objects
-                # If corruption="sp", then loss will be calculate based on just predicting subjects and objects
-                if 's' in corruption:
-                    # shape of po_scores is (batch_size, Nb_preds in entire dataset)
-                    po_scores = model.forward(xp_batch_emb, None, xo_batch_emb, entity_embeddings=e_graph, predicate_embeddings=p_graph)
-                    loss += loss_function(po_scores, xs_batch)
-
-                if 'o' in corruption:
-                    # shape of sp_scores is (batch_size, Nb_entities in entire dataset)
-                    sp_scores = model.forward(xp_batch_emb, xs_batch_emb, None, entity_embeddings=e_graph, predicate_embeddings=p_graph)
-                    loss += loss_function(sp_scores, xo_batch)
-
-                if 'p' in corruption:
-                    # shape of so_scores is (batch_size, Nb_entities in entire dataset)
-                    so_scores = model.forward(None, xs_batch_emb, xo_batch_emb, entity_embeddings=e_graph, predicate_embeddings=p_graph)
-                    loss += loss_function(so_scores, xp_batch)
+                loss, factors = get_unreg_loss(xs_batch=xs_batch,
+                                               xp_batch=xp_batch,
+                                               xo_batch=xo_batch,
+                                               corruption=corruption,
+                                               entity_embeddings=e_graph,
+                                               predicate_embeddings=p_graph,
+                                               model=model,
+                                               loss_function=loss_function)
 
                 loss_nonreg_value = loss.item()
                 epoch_loss_nonreg_values += [loss_nonreg_value]
 
-                factors = [model.factor(e) for e in [xp_batch_emb, xs_batch_emb, xo_batch_emb]]
-
                 if regularizer == "F2":
-                    reg_term = F2_reg(factors)
-                    additional_loss = reg_weight_graph*reg_term
-                    loss += additional_loss
-                    # loss += reg_weight_graph * F2_reg(factors)
+                    loss += reg_weight_graph * F2_reg(factors)
 
                 if regularizer == "N3":
                     loss += reg_weight_graph * N3_reg(factors)
@@ -292,19 +319,17 @@ def main(args):
                 loss_value = loss.item()
                 epoch_loss_values += [loss_value]
 
-                if not is_quiet:
-                    logger.info(f'Epoch {epoch_no}/{nb_epochs}\tBatch {batch_no}/{nb_batches}\tLoss {loss_value:.6f} ({loss_nonreg_value:.6f})')
-                    # print(f'Epoch {epoch_no}/{nb_epochs}\tBatch {batch_no}/{nb_batches}\tLoss {loss_value:.6f} ({loss_nonreg_value:.6f})')
-
             loss_mean, loss_std = np.mean(epoch_loss_values), np.std(epoch_loss_values)
             loss_nonreg_mean, loss_nonreg_std = np.mean(epoch_loss_nonreg_values), np.std(epoch_loss_nonreg_values)
+            if not is_quiet:
+                # logger.info(f'Epoch {epoch_no}/{nb_epochs}\tLoss {loss_mean:.4f} ± {loss_std:.4f} ({loss_nonreg_mean:.4f} ± {loss_nonreg_std:.4f})')
+                print(f'Epoch {epoch_no}/{nb_epochs}\tLoss {loss_mean:.5f} ± {loss_std:.5f} ({loss_nonreg_mean:.5f} ± {loss_nonreg_std:.5f})')
 
+            losses_inner += [loss_mean]
             # train_log['loss_mean'] = loss_mean
             # train_log['loss_std'] = loss_std
             # train_log['loss_nonreg_mean'] = loss_nonreg_mean
             # train_log['loss_nonreg_std'] = loss_nonreg_std
-            # logger.info(f'Epoch {epoch_no}/{nb_epochs}\tLoss {loss_mean:.4f} ± {loss_std:.4f} ({loss_nonreg_mean:.4f} ± {loss_nonreg_std:.4f})')
-            print(f'Epoch {epoch_no}/{nb_epochs}\tLoss {loss_mean:.4f} ± {loss_std:.4f} ({loss_nonreg_mean:.4f} ± {loss_nonreg_std:.4f})')
 
             # if validate_every is not None and epoch_no % validate_every == 0:
             #     for triples, name in [(t, n) for t, n in triples_name_pairs if len(t) > 0]:
@@ -326,7 +351,15 @@ def main(args):
             # if use_wandb == True:
             #     wandb.log(train_log, step=epoch_no, commit=True)
 
+        if outer_step == 0:
+            plt.figure(1)
+            plt.plot(losses_inner)
+            plt.xlabel("Epoch (inner step)")
+            plt.ylabel("Inner loss on training set")
+            plt.title("Inner loss by epoch for first inner loop")
+            plt.show()
 
+        losses_inner_final_epoch += [losses_inner[-1]]
 
         # if last_logged_epoch != nb_epochs:
         #     eval_log = {}
@@ -348,18 +381,83 @@ def main(args):
         #
         #     if use_wandb == True:
         #         wandb.log(eval_log, step=nb_epochs, commit=True)
-        #
-        # if use_wandb == True:
-        #     wandb.run.summary.update(best_log)
-        #
-        # if save_path is not None:
-        #     torch.save(parameters_lst.state_dict(), save_path)
+
+        nb_dev_triples = data.dev_Xs.shape[0]
+        # if batch_size in make_batches is set to nb_dev_triples, we are in full batch setting for evaluation
+        batches = make_batches(nb_dev_triples, batch_size=nb_dev_triples)
+
+        for start, end in batches:
+            xs_batch_dev = data.dev_Xs[start:end]
+            xp_batch_dev = data.dev_Xp[start:end]
+            xo_batch_dev = data.dev_Xo[start:end]
+
+            xs_batch_dev = torch.tensor(xs_batch_dev, dtype=torch.long, device=device)
+            xp_batch_dev = torch.tensor(xp_batch_dev, dtype=torch.long, device=device)
+            xo_batch_dev = torch.tensor(xo_batch_dev, dtype=torch.long, device=device)
+
+            loss_outer, _ = get_unreg_loss(xs_batch=xs_batch_dev,
+                                           xp_batch=xp_batch_dev,
+                                           xo_batch=xo_batch_dev,
+                                           corruption=corruption,
+                                           entity_embeddings=e_graph,
+                                           predicate_embeddings=p_graph,
+                                           model=model,
+                                           loss_function=loss_function_outer)
+
+            # PLOTTING ONLY
+            losses_outer += [loss_outer.detach().clone().item()]
+            e_vals += [torch.norm(e_graph.detach().clone())]
+            p_vals += [torch.norm(p_graph.detach().clone())]
+            reg_weight_vals += [reg_weight_graph.detach().clone()]
+
+            print(f"meta loss: {loss_outer.item()}")
+            print(f"reg param: {reg_weight_graph.item()}")
+
+            loss_outer.backward()
+            optimizer_outer.step()
+            optimizer_outer.zero_grad()
+
+        if use_wandb == True:
+            wandb.run.summary.update(best_log)
+
+        if save_path is not None:
+            torch.save(parameters_lst.state_dict(), save_path)
 
     if use_wandb == True:
         wandb.save(f"{save_path[:-4]}.log")
         wandb.save("kbc_meta/logs/array.err")
         wandb.save("kbc_meta/logs/array.out")
         wandb.finish()
+
+    plt.figure(2)
+    plt.plot(losses_inner_final_epoch)
+    plt.xlabel("Outer step")
+    plt.ylabel("Inner loss at final epoch of inner loop on training set")
+    plt.title("Final epoch (inner step) loss by outer step")
+    plt.show()
+
+    plt.figure(3)
+    plt.plot(losses_outer)
+    plt.xlabel("Outer step")
+    plt.ylabel("Outer loss on dev set")
+    plt.title(f"Outer losses\nembedding size: {embedding_size} | batch_size: {batch_size} | reg: {regularizer} | reg weight init: {regweight_init}\nepochs: {nb_epochs} | innerOpt: {optimizer_name} | outerOpt: {optimizer_outer_name} | LR: {learning_rate} | outerLR: {learning_rate_outer}")
+    plt.show()
+
+    plt.figure(4)
+    plt.plot(reg_weight_vals)
+    plt.xlabel("Outer step")
+    plt.ylabel("Regularisaton weight value")
+    plt.title(f"Regularisation weight values (Start value: {regweight_init})")
+    plt.show()
+
+    plt.figure(5)
+    plt.plot(e_vals)
+    plt.plot(p_vals)
+    plt.legend(["entities", "predicates"])
+    plt.xlabel("Outer step")
+    plt.ylabel("L2 norm of embeddings")
+    plt.title("Entity and predicate embedding norms")
+    plt.show()
 
     logger.info("Training finished")
 
