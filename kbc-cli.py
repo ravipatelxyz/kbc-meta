@@ -219,9 +219,9 @@ def main(args):
     if do_masking:
         mask_sp, mask_po, mask_so = compute_masks(data.train_triples, data.train_triples, data.entity_to_idx, data.predicate_to_idx)
 
-        mask_sp = torch.tensor(mask_sp, dtype=torch.long, device=device)
-        mask_po = torch.tensor(mask_po, dtype=torch.long, device=device)
-        mask_so = torch.tensor(mask_so, dtype=torch.long, device=device)
+        mask_sp = torch.tensor(mask_sp, dtype=torch.long, device=device, requires_grad=False)
+        mask_po = torch.tensor(mask_po, dtype=torch.long, device=device, requires_grad=False)
+        mask_so = torch.tensor(mask_so, dtype=torch.long, device=device, requires_grad=False)
 
     # Training loop
 
