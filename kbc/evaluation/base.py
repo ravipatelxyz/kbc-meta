@@ -75,12 +75,17 @@ def evaluate(entity_embeddings: nn.Embedding,
             tensor_xp = torch.tensor(batch_xp, dtype=torch.long, device=device)
             tensor_xo = torch.tensor(batch_xo, dtype=torch.long, device=device)
 
-            tensor_xs_emb = entity_embeddings(tensor_xs)
-            tensor_xp_emb = predicate_embeddings(tensor_xp)
-            tensor_xo_emb = entity_embeddings(tensor_xo)
+            if type(entity_embeddings) is np.ndarray:
+                tensor_xs_emb = entity_embeddings[tensor_xs]
+                tensor_xp_emb = predicate_embeddings[tensor_xp]
+                tensor_xo_emb = entity_embeddings[tensor_xo]
+            else:
+                tensor_xs_emb = entity_embeddings(tensor_xs)
+                tensor_xp_emb = predicate_embeddings(tensor_xp)
+                tensor_xo_emb = entity_embeddings(tensor_xo)
 
-            scores_sp = model.forward(tensor_xp_emb, tensor_xs_emb, None).cpu().numpy()
-            scores_po = model.forward(tensor_xp_emb, None, tensor_xo_emb).cpu().numpy()
+            scores_sp = model.forward(tensor_xp_emb, tensor_xs_emb, None, entity_embeddings=entity_embeddings, predicate_embeddings=predicate_embeddings).cpu().numpy()
+            scores_po = model.forward(tensor_xp_emb, None, tensor_xo_emb, entity_embeddings=entity_embeddings, predicate_embeddings=predicate_embeddings).cpu().numpy()
 
         batch_size = batch_xs.shape[0]
         for elem_idx in range(batch_size):
