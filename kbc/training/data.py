@@ -31,7 +31,6 @@ def triples_to_vectors(triples: List[Tuple[str, str, str]],
     Xo = np.array([entity_to_idx[o] for (s, p, o) in triples], dtype=np.int32)
     return Xs, Xp, Xo
 
-
 class Data:
     def __init__(self,
                  train_path: str,
