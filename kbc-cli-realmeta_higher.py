@@ -21,6 +21,7 @@ from kbc.util import is_torch_tpu_available, set_seed, make_batches
 
 from kbc.training.data import Data
 from kbc.training.batcher import Batcher
+from kbc.training.masking import compute_masks
 
 from kbc.models import DistMult, ComplEx, TransE
 
@@ -47,11 +48,13 @@ def metrics_to_str(metrics):
 def get_unreg_loss(xs_batch: Tensor,
                  xp_batch: Tensor,
                  xo_batch: Tensor,
+                 xi_batch: Tensor,
                  corruption: str,
                  entity_embeddings: Tensor,
                  predicate_embeddings: Tensor,
                  model,
-                 loss_function: nn.CrossEntropyLoss) -> Tuple[Tensor, List[Tensor]]:
+                 loss_function: nn.CrossEntropyLoss,
+                 masks=None) -> Tuple[Tensor, List[Tensor]]:
 
     # Return embeddings for each s, p, o in the batch
     # This returns tensors of shape (batch_size, rank)
@@ -66,16 +69,22 @@ def get_unreg_loss(xs_batch: Tensor,
     if 's' in corruption:
         # shape of po_scores is (batch_size, Nb_preds in entire dataset)
         po_scores = model.forward(xp_batch_emb, None, xo_batch_emb, entity_embeddings=entity_embeddings, predicate_embeddings=predicate_embeddings)
+        if masks is not None:
+            po_scores = po_scores + masks[0][xi_batch, :]
         loss += loss_function(po_scores, xs_batch)
 
     if 'o' in corruption:
         # shape of sp_scores is (batch_size, Nb_entities in entire dataset)
         sp_scores = model.forward(xp_batch_emb, xs_batch_emb, None, entity_embeddings=entity_embeddings, predicate_embeddings=predicate_embeddings)
+        if masks is not None:
+            sp_scores = sp_scores + masks[1][xi_batch, :]
         loss += loss_function(sp_scores, xo_batch)
 
     if 'p' in corruption:
         # shape of so_scores is (batch_size, Nb_entities in entire dataset)
         so_scores = model.forward(None, xs_batch_emb, xo_batch_emb, entity_embeddings=entity_embeddings, predicate_embeddings=predicate_embeddings)
+        if masks is not None:
+            so_scores = so_scores + masks[2][xi_batch, :]
         loss += loss_function(so_scores, xp_batch)
 
     factors = [model.factor(e) for e in [xp_batch_emb, xs_batch_emb, xo_batch_emb]]
@@ -102,6 +111,7 @@ def parse_args(argv):
     # training params (inner loop)
     parser.add_argument('--epochs', '-e', action='store', type=int, default=100)
     parser.add_argument('--learning_rate', '-l', action='store', type=float, default=0.1)
+    parser.add_argument('--stopping_tol_inner', '-ti', action='store', type=float, default=None)
     parser.add_argument('--optimizer', '-o', action='store', type=str, default='adagrad',
                         choices=['adagrad', 'adam', 'sgd'])
     parser.add_argument('--regularizer', '-re', type=str, choices=["F2", "N3"], default="F2")
@@ -115,6 +125,7 @@ def parse_args(argv):
     parser.add_argument('--validate_every', '-V', action='store', type=int, default=None)
     parser.add_argument('--input_type', '-I', action='store', type=str, default='standard',
                         choices=['standard', 'reciprocal'])
+    parser.add_argument('--do_masking_outer_loss', '-om', action='store', type=str, default='False', choices=['True', 'False'])
 
     parser.add_argument('--blackbox_lambda', action='store', type=float, default=None)
 
@@ -123,7 +134,7 @@ def parse_args(argv):
                         choices=['adagrad', 'adam', 'sgd'])
     parser.add_argument('--learning_rate_outer', '-lo', action='store', type=float, default=0.005)
     parser.add_argument('--outer_steps', '-os', action='store', type=int, default=100)
-    parser.add_argument('--stopping_tol_outer', '-to', action='store', type=float, default=0.02)
+    parser.add_argument('--stopping_tol_outer', '-to', action='store', type=float, default=None)
 
     # other
     parser.add_argument('--load', action='store', type=str, default=None)
@@ -150,6 +161,7 @@ def main(args):
     nb_epochs = args.epochs
     seed = args.seed
     learning_rate = args.learning_rate
+    stopping_tol_inner = args.stopping_tol_inner
     # F2_weight = args.F2
     # N3_weight = args.N3
     regularizer = args.regularizer
@@ -163,6 +175,7 @@ def main(args):
     learning_rate_outer = args.learning_rate_outer
     outer_steps = args.outer_steps
     stopping_tol_outer = args.stopping_tol_outer
+    do_masking_outer_loss = args.do_masking_outer_loss == 'True'
 
     load_path = args.load
     save_path = args.save
@@ -195,6 +208,7 @@ def main(args):
 
     # the .dev_triples attributes here contain ID strings
     triples_name_pairs = [
+        (data.train_triples, 'train'),
         (data.dev_triples, 'dev'),
         (data.test_triples, 'test'),
     ]
@@ -250,12 +264,25 @@ def main(args):
 
     loss_function_outer = nn.CrossEntropyLoss(reduction='mean')
 
+    # Masking
+
+    masks_outer = None
+    if do_masking_outer_loss:
+        mask_outer_sp, mask_outer_po, mask_outer_so = compute_masks(data.dev_triples,
+                                                                    data.train_triples + data.dev_triples,
+                                                                    data.entity_to_idx,
+                                                                    data.predicate_to_idx)
+
+        mask_outer_po = torch.tensor(mask_outer_po, dtype=torch.long, device=device)
+        mask_outer_sp = torch.tensor(mask_outer_sp, dtype=torch.long, device=device)
+        mask_outer_so = torch.tensor(mask_outer_so, dtype=torch.long, device=device)
+        masks_outer = [mask_outer_po, mask_outer_sp, mask_outer_so]
+
     # Training loop
 
-    last_logged_epoch = 0
-    best_mrr = 0
+    best_loss_outer = np.inf
 
-    losses_outer =[]
+    losses_outer = []
     losses_inner_final_epoch = []
     e_vals = []
     p_vals = []
@@ -280,6 +307,7 @@ def main(args):
         diffopt = higher.get_diff_optim(optimizer, [e_graph, p_graph], track_higher_grads=True)
 
         losses_inner = []
+        losses_inner_dev = []
         for epoch_no in range(1, nb_epochs + 1):
             train_log = {}  # dictionary to store training metrics for uploading to wandb for each epoch
             batcher = Batcher(data.Xs, data.Xp, data.Xo, batch_size, 1, random_state)
@@ -299,6 +327,7 @@ def main(args):
                 loss, factors = get_unreg_loss(xs_batch=xs_batch,
                                                xp_batch=xp_batch,
                                                xo_batch=xo_batch,
+                                               xi_batch=xi_batch,
                                                corruption=corruption,
                                                entity_embeddings=e_graph,
                                                predicate_embeddings=p_graph,
@@ -325,103 +354,123 @@ def main(args):
                 # logger.info(f'Epoch {epoch_no}/{nb_epochs}\tLoss {loss_mean:.4f} ± {loss_std:.4f} ({loss_nonreg_mean:.4f} ± {loss_nonreg_std:.4f})')
                 print(f'Epoch {epoch_no}/{nb_epochs}\tLoss {loss_mean:.5f} ± {loss_std:.5f} ({loss_nonreg_mean:.5f} ± {loss_nonreg_std:.5f})')
 
-            losses_inner += [loss_mean]
-            # train_log['loss_mean'] = loss_mean
-            # train_log['loss_std'] = loss_std
-            # train_log['loss_nonreg_mean'] = loss_nonreg_mean
-            # train_log['loss_nonreg_std'] = loss_nonreg_std
+            losses_inner += [loss_nonreg_mean]
 
-            # if validate_every is not None and epoch_no % validate_every == 0:
-            #     for triples, name in [(t, n) for t, n in triples_name_pairs if len(t) > 0]:
-            #         model.eval()
-            #         metrics = evaluate(entity_embeddings=entity_embeddings, predicate_embeddings=predicate_embeddings,
-            #                            test_triples=triples, all_triples=data.all_triples,
-            #                            entity_to_index=data.entity_to_idx, predicate_to_index=data.predicate_to_idx,
-            #                            model=model, batch_size=eval_batch_size, device=device)
-            #         logger.info(f'Epoch {epoch_no}/{nb_epochs}\t{name} results\t{metrics_to_str(metrics)}')
-            #         metrics_new = {f'{name}_{k}': v for k, v in metrics.items()} # hack to get different keys for logging
-            #         train_log.update(metrics_new)
-            #         # print(f'Epoch {epoch_no}/{nb_epochs}\t{name} results\t{metrics_to_str(metrics)}')
-            #     last_logged_epoch = epoch_no
-            #
-            #     if train_log['dev_MRR'] > best_mrr:
-            #         best_mrr = train_log['dev_MRR']
-            #         best_log=train_log
-            #
-            # if use_wandb == True:
-            #     wandb.log(train_log, step=epoch_no, commit=True)
+            if stopping_tol_inner is not None:
+                xs_dev = torch.tensor(data.dev_Xs, dtype=torch.long, device=device)
+                xp_dev = torch.tensor(data.dev_Xp, dtype=torch.long, device=device)
+                xo_dev = torch.tensor(data.dev_Xo, dtype=torch.long, device=device)
+                xi_dev = data.dev_Xi
 
-        if outer_step == 0:
-            plt.figure(1)
+                loss_inner_dev, _ = get_unreg_loss(xs_batch=xs_dev,
+                                               xp_batch=xp_dev,
+                                               xo_batch=xo_dev,
+                                               xi_batch=xi_dev,
+                                               corruption=corruption,
+                                               entity_embeddings=e_graph,
+                                               predicate_embeddings=p_graph,
+                                               model=model,
+                                               loss_function=loss_function_outer,
+                                               masks=masks_outer)
+                losses_inner_dev += [loss_inner_dev.item()]
+
+                if epoch_no > 20 and np.mean(losses_inner_dev[-10:-5]) - np.mean(losses_inner_dev[-5:]) < stopping_tol_inner:
+                    print(f"Num inner steps: {epoch_no}")
+                    break
+
+        # plt.plot(losses_inner_dev)
+        # plt.show()
+
+            # if epoch_no > 20 and np.mean(losses_inner[-20:-10]) - np.mean(losses_inner[-10:]) < stopping_tol_inner:
+            #     print(epoch_no)
+            #     break
+
+        if outer_step == 0 or outer_step == outer_steps-1:
+            plt.figure()
             plt.plot(losses_inner)
+            if stopping_tol_inner is not None:
+                plt.plot(losses_inner_dev)
+                plt.legend(["training loss", "dev loss"])
             plt.xlabel("Epoch (inner step)")
-            plt.ylabel("Inner loss on training set")
+            plt.ylabel("Inner loss")
             plt.title("Inner loss by epoch for first inner loop")
             plt.show()
 
         losses_inner_final_epoch += [losses_inner[-1]]
 
-        # if last_logged_epoch != nb_epochs:
-        #     eval_log = {}
-        #     for triples, name in [(t, n) for t, n in triples_name_pairs if len(t) > 0]:
-        #         model.eval()
-        #         metrics = evaluate(entity_embeddings=entity_embeddings, predicate_embeddings=predicate_embeddings,
-        #                            test_triples=triples, all_triples=data.all_triples,
-        #                            entity_to_index=data.entity_to_idx, predicate_to_index=data.predicate_to_idx,
-        #                            model=model, batch_size=eval_batch_size, device=device)
-        #         logger.info(f'Final \t{name} results\t{metrics_to_str(metrics)}')
-        #
-        #         metrics_new = {f'{name}_{k}': v for k, v in metrics.items()}  # hack to get different keys for logging
-        #         eval_log.update(metrics_new)
-        #         # print(f'Final \t{name} results\t{metrics_to_str(metrics)}')
-        #
-        #     if eval_log['dev_MRR'] > best_mrr:
-        #         best_mrr = eval_log['dev_MRR']
-        #         best_log=eval_log
-        #
-        #     if use_wandb == True:
-        #         wandb.log(eval_log, step=nb_epochs, commit=True)
+        xs_dev = torch.tensor(data.dev_Xs, dtype=torch.long, device=device)
+        xp_dev = torch.tensor(data.dev_Xp, dtype=torch.long, device=device)
+        xo_dev = torch.tensor(data.dev_Xo, dtype=torch.long, device=device)
+        xi_dev = data.dev_Xi
 
-        nb_dev_triples = data.dev_Xs.shape[0]
-        # if batch_size in make_batches is set to nb_dev_triples, we are in full batch setting for evaluation
-        batches = make_batches(nb_dev_triples, batch_size=nb_dev_triples)
+        loss_outer, _ = get_unreg_loss(xs_batch=xs_dev,
+                                       xp_batch=xp_dev,
+                                       xo_batch=xo_dev,
+                                       xi_batch=xi_dev,
+                                       corruption=corruption,
+                                       entity_embeddings=e_graph,
+                                       predicate_embeddings=p_graph,
+                                       model=model,
+                                       loss_function=loss_function_outer,
+                                       masks=masks_outer)
 
-        for start, end in batches:
-            xs_batch_dev = data.dev_Xs[start:end]
-            xp_batch_dev = data.dev_Xp[start:end]
-            xo_batch_dev = data.dev_Xo[start:end]
+        # store a copy of best embeddings
+        if loss_outer < best_loss_outer:
+            best_loss_outer = loss_outer
+            best_reg_weight = reg_weight_graph.detach().clone()
+            best_e_graph = e_graph.detach().clone()
+            best_p_graph = p_graph.detach().clone()
+            best_outer_step = outer_step
 
-            xs_batch_dev = torch.tensor(xs_batch_dev, dtype=torch.long, device=device)
-            xp_batch_dev = torch.tensor(xp_batch_dev, dtype=torch.long, device=device)
-            xo_batch_dev = torch.tensor(xo_batch_dev, dtype=torch.long, device=device)
+        # for plotting only
+        losses_outer += [loss_outer.detach().clone().item()]
+        e_vals += [torch.norm(e_graph.detach().clone())]
+        p_vals += [torch.norm(p_graph.detach().clone())]
+        reg_weight_vals += [reg_weight_graph.detach().clone()]
 
-            loss_outer, _ = get_unreg_loss(xs_batch=xs_batch_dev,
-                                           xp_batch=xp_batch_dev,
-                                           xo_batch=xo_batch_dev,
-                                           corruption=corruption,
-                                           entity_embeddings=e_graph,
-                                           predicate_embeddings=p_graph,
-                                           model=model,
-                                           loss_function=loss_function_outer)
+        print(f"meta loss: {loss_outer.item()}")
+        print(f"reg param: {reg_weight_graph.item()}")
 
-            # PLOTTING ONLY
-            losses_outer += [loss_outer.detach().clone().item()]
-            e_vals += [torch.norm(e_graph.detach().clone())]
-            p_vals += [torch.norm(p_graph.detach().clone())]
-            reg_weight_vals += [reg_weight_graph.detach().clone()]
-
-            print(f"meta loss: {loss_outer.item()}")
-            print(f"reg param: {reg_weight_graph.item()}")
-
-            loss_outer.backward()
-            optimizer_outer.step()
-            optimizer_outer.zero_grad()
+        loss_outer.backward()
+        optimizer_outer.step()
+        optimizer_outer.zero_grad()
 
         if use_wandb == True:
             wandb.run.summary.update(best_log)
 
         if save_path is not None:
             torch.save(parameters_lst.state_dict(), save_path)
+
+    # eval_log = {}
+    # Final outer step metrics
+    print(f"Final \touter step: {outer_steps} \treg param: {reg_weight_vals[-1]} \touter loss {losses_outer[-1]}")
+    for triples, name in [(t, n) for t, n in triples_name_pairs if len(t) > 0]:
+        metrics = evaluate(entity_embeddings=e_graph, predicate_embeddings=p_graph,
+                           test_triples=triples, all_triples=data.all_triples,
+                           entity_to_index=data.entity_to_idx, predicate_to_index=data.predicate_to_idx,
+                           model=model, batch_size=eval_batch_size, device=device)
+        # logger.info(f'Final \t{name} results\t{metrics_to_str(metrics)}')
+
+        # metrics_new = {f'{name}_{k}': v for k, v in metrics.items()}  # hack to get different keys for logging
+        # eval_log.update(metrics_new)
+        print(f'Final \t{name} results\t{metrics_to_str(metrics)}')
+
+    # eval_log = {}
+    # Best outer step metrics (i.e. step with lowest outer loss)
+    print(f"Best \touter step: {best_outer_step+1} \treg param: {best_reg_weight} \touter loss {best_loss_outer}")
+    for triples, name in [(t, n) for t, n in triples_name_pairs if len(t) > 0]:
+        metrics = evaluate(entity_embeddings=best_e_graph, predicate_embeddings=best_p_graph,
+                           test_triples=triples, all_triples=data.all_triples,
+                           entity_to_index=data.entity_to_idx, predicate_to_index=data.predicate_to_idx,
+                           model=model, batch_size=eval_batch_size, device=device)
+        # logger.info(f'Best \t{name} results\t{metrics_to_str(metrics)}')
+
+        # metrics_new = {f'{name}_{k}': v for k, v in metrics.items()}  # hack to get different keys for logging
+        # eval_log.update(metrics_new)
+        print(f'Best \t{name} results \t{metrics_to_str(metrics)}')
+
+    if use_wandb == True:
+        wandb.log(eval_log, step=nb_epochs, commit=True)
 
     if use_wandb == True:
         wandb.save(f"{save_path[:-4]}.log")
