@@ -184,8 +184,8 @@ def main(args):
     set_seed(seed)
     random_state = np.random.RandomState(seed)
 
-    if use_wandb == True:
-        wandb.init(entity="uclnlp", project="kbc_meta", group=f"base")
+    if use_wandb:
+        wandb.init(entity="uclnlp", project="kbc_meta", group=f"realmeta_nations")
         wandb.config.update(args)
 
     device = torch.device('cpu')
@@ -197,7 +197,7 @@ def main(args):
         device = xm.xla_device()
 
     logger.info(f'Device: {device}')
-    if use_wandb == True:
+    if use_wandb:
         wandb.config.update({'device': device})
 
     data = Data(train_path=train_path, dev_path=dev_path, test_path=test_path,
@@ -299,7 +299,6 @@ def main(args):
         losses_inner_train = []
         losses_inner_dev = []
         for epoch_no in range(1, nb_epochs + 1):
-            train_log = {}  # dictionary to store training metrics for uploading to wandb for each epoch
             batcher = Batcher(data.Xs, data.Xp, data.Xo, batch_size, 1, random_state)
 
             batch_losses_train_withreg = []  # to store loss for each batch in the epoch
@@ -338,12 +337,7 @@ def main(args):
                 batch_loss_train_withreg = batch_loss_train.item()
                 batch_losses_train_withreg += [batch_loss_train_withreg]
 
-            epoch_loss_train_mean, epoch_loss_train_std = np.mean(batch_losses_train_withreg), np.std(batch_losses_train_withreg)
-            epoch_loss_train_nonreg_mean, epoch_loss_train_nonreg_std = np.mean(batch_losses_train_nonreg), np.std(batch_losses_train_nonreg)
-            if not is_quiet:
-                # logger.info(f'Epoch {epoch_no}/{nb_epochs}\tLoss {loss_mean:.4f} ± {loss_std:.4f} ({loss_nonreg_mean:.4f} ± {loss_nonreg_std:.4f})')
-                print(f'Epoch {epoch_no}/{nb_epochs}\tLoss {epoch_loss_train_mean:.5f} ± {epoch_loss_train_std:.5f} ({epoch_loss_train_nonreg_mean:.5f} ± {epoch_loss_train_nonreg_std:.5f})')
-
+            epoch_loss_train_nonreg_mean = np.mean(batch_losses_train_nonreg)
             losses_inner_train += [epoch_loss_train_nonreg_mean]
 
             if outer_step == 0 or outer_step == outer_steps - 1 or stopping_tol_inner is not None:
@@ -365,9 +359,12 @@ def main(args):
                                                    masks=masks_dev)
                 losses_inner_dev += [loss_inner_dev.item()]
 
+                completed_epochs = nb_epochs
                 if stopping_tol_inner is not None and epoch_no > 20 and np.mean(losses_inner_dev[-10:-5]) - np.mean(
                         losses_inner_dev[-5:]) < stopping_tol_inner:
-                    print(f"Num inner steps: {epoch_no}")
+                    completed_epochs = epoch_no
+                    if not is_quiet:
+                        print(f"Num inner steps: {epoch_no}")
                     break
 
         if outer_step == 0 or outer_step == outer_steps-1:
@@ -377,7 +374,14 @@ def main(args):
             plt.legend(["training loss", "dev loss"])
             plt.xlabel("Epoch (inner step)")
             plt.ylabel("Inner train loss")
-            plt.title(f"Inner training losses by epoch for inner loop number {outer_step}")
+            plt.title(f"Inner training losses, for inner loop number {outer_step}")
+            plt.tight_layout()
+            if save_figs:
+                filename = f"realmeta_nations_innertrainloss_outerstep{outer_step}.png"
+                if use_wandb:
+                    plt.savefig(os.path.join(wandb.run.dir, filename))
+                else:
+                    plt.savefig(f"./realmeta_nations/plots/{filename}")
             plt.show()
 
         losses_outer_train += [losses_inner_train[-1]]
@@ -398,6 +402,26 @@ def main(args):
                                        loss_function=loss_function,
                                        masks=masks_dev)
 
+
+        # for plotting only
+        losses_outer_dev += [loss_outer_dev.detach().clone().item()]
+        e_vals += [torch.norm(e_graph.detach().clone())]
+        p_vals += [torch.norm(p_graph.detach().clone())]
+        reg_weight_vals += [reg_weight_graph.detach().clone()]
+        if use_wandb:
+            outer_log = {"train_loss_outer": losses_outer_train[-1],
+                         "dev_loss_outer": losses_outer_dev[-1],
+                         "completed_inner_steps": completed_epochs,
+                         "L2_norm_entity_embeddings": e_vals[-1],
+                         "L2_norm_predicate_embeddings": p_vals[-1],
+                         "regularisation_weight": reg_weight_vals[-1]
+                         }
+            wandb.log(outer_log, step=outer_step)
+
+        if not is_quiet:
+            print(f"outer dev loss: {loss_outer_dev.item()}")
+            print(f"reg param: {reg_weight_graph.item():.5f} [{np.exp(reg_weight_graph.item()):.7f}]")
+
         # store a copy of best embeddings
         if loss_outer_dev < best_loss_outer_dev:
             best_loss_outer_dev = loss_outer_dev
@@ -405,91 +429,93 @@ def main(args):
             best_e_graph = e_graph.detach().clone()
             best_p_graph = p_graph.detach().clone()
             best_outer_step = outer_step
-
-        # for plotting only
-        losses_outer_dev += [loss_outer_dev.detach().clone().item()]
-        e_vals += [torch.norm(e_graph.detach().clone())]
-        p_vals += [torch.norm(p_graph.detach().clone())]
-        reg_weight_vals += [reg_weight_graph.detach().clone()]
-
-        print(f"outer dev loss: {loss_outer_dev.item()}")
-        print(f"reg param: {reg_weight_graph.item():.5f} [{np.exp(reg_weight_graph.item()):.7f}]")
+            if use_wandb:
+                best_log = outer_log
 
         loss_outer_dev.backward()
         optimizer_outer.step()
         optimizer_outer.zero_grad()
 
-        if use_wandb == True:
-            wandb.run.summary.update(best_log)
-
-        if save_path is not None:
-            torch.save(parameters_lst.state_dict(), save_path)
-
-    # eval_log = {}
+    metrics_log = {}
     # Final outer step metrics
     print(f"Final \touter step: {outer_steps} \treg param: {reg_weight_vals[-1]} \touter dev loss {losses_outer_dev[-1]}")
     for triples, name in [(t, n) for t, n in triples_name_pairs if len(t) > 0]:
-        metrics = evaluate(entity_embeddings=e_graph, predicate_embeddings=p_graph,
+        metrics_final = evaluate(entity_embeddings=e_graph, predicate_embeddings=p_graph,
                            test_triples=triples, all_triples=data.all_triples,
                            entity_to_index=data.entity_to_idx, predicate_to_index=data.predicate_to_idx,
                            model=model, batch_size=eval_batch_size, device=device)
-        # logger.info(f'Final \t{name} results\t{metrics_to_str(metrics)}')
+        # logger.info(f'Final \t{name} results\t{metrics_to_str(metrics_final)}')
+        if use_wandb:
+            metrics_final_new = {f'final_{name}_{k}': v for k, v in metrics_final.items()}  # hack to get different keys for logging
+            metrics_final_new.update({f'final_{k}': v for k, v in outer_log.items()}) #todo change outer_log to have keys as 'final_...'
+            metrics_log.update(metrics_final_new)
+        print(f'Final \t{name} results\t{metrics_to_str(metrics_final)}')
 
-        # metrics_new = {f'{name}_{k}': v for k, v in metrics.items()}  # hack to get different keys for logging
-        # eval_log.update(metrics_new)
-        print(f'Final \t{name} results\t{metrics_to_str(metrics)}')
-
-    # eval_log = {}
     # Best outer step metrics (i.e. step with lowest outer dev loss)
     print(f"Best \touter step: {best_outer_step+1} \treg param: {best_reg_weight} \touter dev loss {best_loss_outer_dev}")
     for triples, name in [(t, n) for t, n in triples_name_pairs if len(t) > 0]:
-        metrics = evaluate(entity_embeddings=best_e_graph, predicate_embeddings=best_p_graph,
+        metrics_best = evaluate(entity_embeddings=best_e_graph, predicate_embeddings=best_p_graph,
                            test_triples=triples, all_triples=data.all_triples,
                            entity_to_index=data.entity_to_idx, predicate_to_index=data.predicate_to_idx,
                            model=model, batch_size=eval_batch_size, device=device)
-        # logger.info(f'Best \t{name} results\t{metrics_to_str(metrics)}')
+        # logger.info(f'Best \t{name} results\t{metrics_to_str(metrics_best)}')
+        if use_wandb:
+            metrics_best_new = {f'best_{name}_{k}': v for k, v in metrics_best.items()}  # hack to get different keys for logging
+            metrics_best_new.update({f'best_{k}': v for k, v in best_log.items()}) #todo change outer_log to have keys as 'final_...'
+            metrics_log.update(metrics_best_new)
+        print(f'Best \t{name} results \t{metrics_to_str(metrics_best)}')
 
-        # metrics_new = {f'{name}_{k}': v for k, v in metrics.items()}  # hack to get different keys for logging
-        # eval_log.update(metrics_new)
-        print(f'Best \t{name} results \t{metrics_to_str(metrics)}')
-
-    if use_wandb == True:
-        wandb.log(eval_log, step=nb_epochs, commit=True)
-
-    if use_wandb == True:
-        wandb.save(f"{save_path[:-4]}.log")
-        wandb.save("kbc_meta/logs/array.err")
-        wandb.save("kbc_meta/logs/array.out")
+    if use_wandb:
+        wandb.run.summary.update(metrics_log)
+        # wandb.save(f"{save_path[:-4]}.log")
+        # wandb.save("kbc_meta/logs/array.err")
+        # wandb.save("kbc_meta/logs/array.out")
         wandb.finish()
 
     plt.figure(2)
     plt.plot(losses_outer_train)
+    plt.plot(losses_outer_dev)
+    plt.legend(["training loss", "validation loss"])
     plt.xlabel("Outer step")
-    plt.ylabel("Outer training loss")
-    plt.title("Outer training losses")
+    plt.ylabel("Outer loss")
+    plt.title(f"Outer losses\nembedding size: {embedding_size} | batch_size: {batch_size} | reg: {regularizer} | reg weight init: {regweight_init}\nepochs: {nb_epochs} | innerOpt: {optimizer_name} | outerOpt: {optimizer_outer_name} | LR: {learning_rate} | outerLR: {learning_rate_outer}")
+    plt.tight_layout()
+    if save_figs:
+        filename = f"realmeta_nations_outer_losses.png"
+        if use_wandb:
+            plt.savefig(os.path.join(wandb.run.dir, filename))
+        else:
+            plt.savefig(f"./realmeta_nations/plots/{filename}")
     plt.show()
 
     plt.figure(3)
-    plt.plot(losses_outer_dev)
-    plt.xlabel("Outer step")
-    plt.ylabel("Outer dev loss")
-    plt.title(f"Outer dev losses\nembedding size: {embedding_size} | batch_size: {batch_size} | reg: {regularizer} | reg weight init: {regweight_init}\nepochs: {nb_epochs} | innerOpt: {optimizer_name} | outerOpt: {optimizer_outer_name} | LR: {learning_rate} | outerLR: {learning_rate_outer}")
-    plt.show()
-
-    plt.figure(4)
     plt.plot(reg_weight_vals)
     plt.xlabel("Outer step")
     plt.ylabel("Regularisaton weight value")
     plt.title(f"Regularisation weight values (Start value: {regweight_init})")
+    plt.tight_layout()
+    if save_figs:
+        filename = f"realmeta_nations_reg_weights.png"
+        if use_wandb:
+            plt.savefig(os.path.join(wandb.run.dir, filename))
+        else:
+            plt.savefig(f"./realmeta_nations/plots/{filename}")
     plt.show()
 
-    plt.figure(5)
+    plt.figure(4)
     plt.plot(e_vals)
     plt.plot(p_vals)
     plt.legend(["entities", "predicates"])
     plt.xlabel("Outer step")
     plt.ylabel("L2 norm of embeddings")
     plt.title("Entity and predicate embedding norms")
+    plt.tight_layout()
+    if save_figs:
+        filename = f"realmeta_nations_entity_L2norms.png"
+        if use_wandb:
+            plt.savefig(os.path.join(wandb.run.dir, filename))
+        else:
+            plt.savefig(f"./realmeta_nations/plots/{filename}")
     plt.show()
 
     logger.info("Training finished")
