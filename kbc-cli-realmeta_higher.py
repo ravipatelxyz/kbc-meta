@@ -338,10 +338,10 @@ def main(args):
                 epoch_loss_nonreg_values += [loss_nonreg_value]
 
                 if regularizer == "F2":
-                    loss += reg_weight_graph * F2_reg(factors)
+                    loss += torch.exp(reg_weight_graph) * F2_reg(factors)
 
                 if regularizer == "N3":
-                    loss += reg_weight_graph * N3_reg(factors)
+                    loss += torch.exp(reg_weight_graph) * N3_reg(factors)
 
                 e_graph, p_graph = diffopt.step(loss, params=[e_graph, p_graph])
 
@@ -356,13 +356,12 @@ def main(args):
 
             losses_inner += [loss_nonreg_mean]
 
-            if stopping_tol_inner is not None:
-                xs_dev = torch.tensor(data.dev_Xs, dtype=torch.long, device=device)
-                xp_dev = torch.tensor(data.dev_Xp, dtype=torch.long, device=device)
-                xo_dev = torch.tensor(data.dev_Xo, dtype=torch.long, device=device)
-                xi_dev = data.dev_Xi
+            xs_dev = torch.tensor(data.dev_Xs, dtype=torch.long, device=device)
+            xp_dev = torch.tensor(data.dev_Xp, dtype=torch.long, device=device)
+            xo_dev = torch.tensor(data.dev_Xo, dtype=torch.long, device=device)
+            xi_dev = data.dev_Xi
 
-                loss_inner_dev, _ = get_unreg_loss(xs_batch=xs_dev,
+            loss_inner_dev, _ = get_unreg_loss(xs_batch=xs_dev,
                                                xp_batch=xp_dev,
                                                xo_batch=xo_dev,
                                                xi_batch=xi_dev,
@@ -372,25 +371,18 @@ def main(args):
                                                model=model,
                                                loss_function=loss_function_outer,
                                                masks=masks_outer)
-                losses_inner_dev += [loss_inner_dev.item()]
+            losses_inner_dev += [loss_inner_dev.item()]
 
-                if epoch_no > 20 and np.mean(losses_inner_dev[-10:-5]) - np.mean(losses_inner_dev[-5:]) < stopping_tol_inner:
-                    print(f"Num inner steps: {epoch_no}")
-                    break
-
-        # plt.plot(losses_inner_dev)
-        # plt.show()
-
-            # if epoch_no > 20 and np.mean(losses_inner[-20:-10]) - np.mean(losses_inner[-10:]) < stopping_tol_inner:
-            #     print(epoch_no)
-            #     break
+            if stopping_tol_inner is not None and epoch_no > 20 and np.mean(losses_inner_dev[-10:-5]) - np.mean(
+                    losses_inner_dev[-5:]) < stopping_tol_inner:
+                print(f"Num inner steps: {epoch_no}")
+                break
 
         if outer_step == 0 or outer_step == outer_steps-1:
             plt.figure()
             plt.plot(losses_inner)
-            if stopping_tol_inner is not None:
-                plt.plot(losses_inner_dev)
-                plt.legend(["training loss", "dev loss"])
+            plt.plot(losses_inner_dev)
+            plt.legend(["training loss", "dev loss"])
             plt.xlabel("Epoch (inner step)")
             plt.ylabel("Inner loss")
             plt.title("Inner loss by epoch for first inner loop")
@@ -429,7 +421,7 @@ def main(args):
         reg_weight_vals += [reg_weight_graph.detach().clone()]
 
         print(f"meta loss: {loss_outer.item()}")
-        print(f"reg param: {reg_weight_graph.item()}")
+        print(f"reg param: {reg_weight_graph.item():.5f} [{np.exp(reg_weight_graph.item()):.7f}]")
 
         loss_outer.backward()
         optimizer_outer.step()
