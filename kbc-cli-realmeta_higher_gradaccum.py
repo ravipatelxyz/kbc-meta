@@ -340,8 +340,8 @@ def main(args):
 
                     e_graph, p_graph = diffopt.step(batch_loss_train, params=[e_graph, p_graph])
 
-                    batch_loss_train_with_reg = batch_loss_train.item()
-                    batch_losses_train_withreg += [batch_loss_train_with_reg]
+                    batch_loss_train_withreg = batch_loss_train.item()
+                    batch_losses_train_withreg += [batch_loss_train_withreg]
 
                 epoch_loss_train_mean, epoch_loss_train_std = np.mean(batch_losses_train_withreg), np.std(batch_losses_train_withreg)
                 epoch_loss_train_nonreg_mean, epoch_loss_train_nonreg_std = np.mean(batch_losses_train_nonreg), np.std(batch_losses_train_nonreg)
