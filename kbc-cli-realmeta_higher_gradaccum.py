@@ -118,6 +118,7 @@ def parse_args(argv):
     parser.add_argument('--regweight_init', '-rw', type=float, default=0.001)
     # parser.add_argument('--F2', action='store', type=float, default=None)
     # parser.add_argument('--N3', action='store', type=float, default=None)
+    parser.add_argument('--accum_steps', '-as', action='store', type=int, default=1)
 
     parser.add_argument('--corruption', '-c', action='store', type=str, default='so',
                         choices=['so', 'spo'])
@@ -168,6 +169,7 @@ def main(args):
     corruption = args.corruption
     input_type = args.input_type
     blackbox_lambda = args.blackbox_lambda
+    accum_steps = args.accum_steps
 
     optimizer_outer_name = args.optimizer_outer
     learning_rate_outer = args.learning_rate_outer
@@ -269,16 +271,18 @@ def main(args):
     # Training loop
 
     best_loss_outer = np.inf
+    best_mean_accum_loss_outer = np.inf
 
     losses_outer = []
     losses_inner_final_epoch = []
     e_vals = []
     p_vals = []
     reg_weight_vals = []
-    accum_steps = 1
 
     for outer_step in range(outer_steps):
         torch.manual_seed(0)
+        accum_losses_outer = []
+        accum_losses_inner_final_epoch = []
         for accum_step in range(accum_steps):
             # nn.Embedding using to a lookup table of embeddings (i.e. you can index entity_embeddings to return given entities embedding)
             # Nice explanation found in Escachator's answer here: https://stackoverflow.com/questions/50747947/embedding-in-pytorch
@@ -378,7 +382,7 @@ def main(args):
                     print(f"Num inner steps: {epoch_no}")
                     break
 
-            losses_inner_final_epoch += [losses_inner[-1]]
+            accum_losses_inner_final_epoch += [losses_inner[-1]]
 
             xs_dev = torch.tensor(data.dev_Xs, dtype=torch.long, device=device)
             xp_dev = torch.tensor(data.dev_Xp, dtype=torch.long, device=device)
@@ -397,15 +401,24 @@ def main(args):
                                            masks=masks_outer)
 
             loss_outer.backward()
+            accum_losses_outer += [loss_outer.item()]
             # print(reg_weight_graph.grad)
 
-        # store a copy of best embeddings
-        if loss_outer < best_loss_outer:
-            best_loss_outer = loss_outer
-            best_reg_weight = reg_weight_graph.detach().clone()
-            best_e_graph = e_graph.detach().clone()
-            best_p_graph = p_graph.detach().clone()
-            best_outer_step = outer_step
+            # store a copy of best embeddings
+            if loss_outer < best_loss_outer:
+                best_loss_outer = loss_outer
+                best_reg_weight = reg_weight_graph.detach().clone()
+                best_e_graph = e_graph.detach().clone()
+                best_p_graph = p_graph.detach().clone()
+                best_outer_step = outer_step
+                best_accum_step = accum_step
+
+        mean_accum_loss_inner_final_epoch = np.mean(accum_losses_inner_final_epoch)
+        mean_accum_loss_outer = np.mean(accum_losses_outer)
+        if mean_accum_loss_outer < best_mean_accum_loss_outer:
+            best_mean_accum_loss_outer = mean_accum_loss_outer
+            best_mean_accum_reg_weight = reg_weight_graph.detach().clone()
+            best_mean_accum_outer_step = outer_step
 
         # plots training and dev loss for a full inner loop
         if outer_step == 0 or outer_step == outer_steps-1:
@@ -415,16 +428,17 @@ def main(args):
             plt.legend(["training loss", "dev loss"])
             plt.xlabel("Epoch (inner step)")
             plt.ylabel("Inner loss")
-            plt.title("Inner loss by epoch for first inner loop")
+            plt.title(f"Inner loss by epoch for inner loop number {outer_step}")
             plt.show()
 
         # for plotting only
-        losses_outer += [loss_outer.detach().clone().item()]
+        losses_inner_final_epoch += [mean_accum_loss_inner_final_epoch.item()]
+        losses_outer += [mean_accum_loss_outer.item()]
         e_vals += [torch.norm(e_graph.detach().clone())]
         p_vals += [torch.norm(p_graph.detach().clone())]
         reg_weight_vals += [reg_weight_graph.detach().clone()]
 
-        print(f"meta loss: {loss_outer.item()}")
+        print(f"outer loss: {losses_outer[-1]}")
         print(f"reg param: {reg_weight_graph.item():.5f} [{np.exp(reg_weight_graph.item()):.7f}]")
 
         optimizer_outer.step()
@@ -436,9 +450,12 @@ def main(args):
         if save_path is not None:
             torch.save(parameters_lst.state_dict(), save_path)
 
+    # Best mean outer losses (calculated by averaging over the repeated gradient accumulation inner loops)
+    print(f"Best mean accum \touter loss: {best_mean_accum_loss_outer} \touter step: {best_mean_accum_outer_step} \treg param: {best_mean_accum_reg_weight}")
+
     # eval_log = {}
     # Final outer step metrics
-    print(f"Final \touter step: {outer_steps} \treg param: {reg_weight_vals[-1]} \touter loss {losses_outer[-1]}")
+    print(f"Final \touter step: {outer_steps} \taccum step: {accum_steps} \treg param: {reg_weight_vals[-1]} \touter loss {losses_outer[-1]}")
     for triples, name in [(t, n) for t, n in triples_name_pairs if len(t) > 0]:
         metrics = evaluate(entity_embeddings=e_graph, predicate_embeddings=p_graph,
                            test_triples=triples, all_triples=data.all_triples,
@@ -452,7 +469,7 @@ def main(args):
 
     # eval_log = {}
     # Best outer step metrics (i.e. step with lowest outer loss)
-    print(f"Best \touter step: {best_outer_step+1} \treg param: {best_reg_weight} \touter loss {best_loss_outer}")
+    print(f"Best \touter step: {best_outer_step+1} \taccum step: {best_accum_step} \treg param: {best_reg_weight} \touter loss {best_loss_outer}")
     for triples, name in [(t, n) for t, n in triples_name_pairs if len(t) > 0]:
         metrics = evaluate(entity_embeddings=best_e_graph, predicate_embeddings=best_p_graph,
                            test_triples=triples, all_triples=data.all_triples,
