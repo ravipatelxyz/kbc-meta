@@ -75,7 +75,7 @@ def evaluate(entity_embeddings: nn.Embedding,
             tensor_xp = torch.tensor(batch_xp, dtype=torch.long, device=device)
             tensor_xo = torch.tensor(batch_xo, dtype=torch.long, device=device)
 
-            if type(entity_embeddings) is np.ndarray:
+            if type(entity_embeddings) is np.ndarray or torch.is_tensor(entity_embeddings):
                 tensor_xs_emb = entity_embeddings[tensor_xs]
                 tensor_xp_emb = predicate_embeddings[tensor_xp]
                 tensor_xo_emb = entity_embeddings[tensor_xo]
