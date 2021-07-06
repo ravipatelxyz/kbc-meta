@@ -125,9 +125,8 @@ def parse_args(argv):
     parser.add_argument('--seed', action='store', type=int, default=0)
     parser.add_argument('--input_type', '-I', action='store', type=str, default='standard',
                         choices=['standard', 'reciprocal'])
-    parser.add_argument('--do_masking_outer_loss', '-om', action='store', type=str, default='False', choices=['True', 'False'])
+    parser.add_argument('--do_masking_dev_loss', '-om', action='store', type=str, default='False', choices=['True', 'False'])
 
-    parser.add_argument('--blackbox_lambda', action='store', type=float, default=None)
 
     # training params (outer loop)
     parser.add_argument('--optimizer_outer', '-oo', action='store', type=str, default='adam',
@@ -168,14 +167,13 @@ def main(args):
     regweight_init = args.regweight_init
     corruption = args.corruption
     input_type = args.input_type
-    blackbox_lambda = args.blackbox_lambda
     accum_steps = args.accum_steps
 
     optimizer_outer_name = args.optimizer_outer
     learning_rate_outer = args.learning_rate_outer
     outer_steps = args.outer_steps
     stopping_tol_outer = args.stopping_tol_outer
-    do_masking_outer_loss = args.do_masking_outer_loss == 'True'
+    do_masking_dev_loss = args.do_masking_dev_loss == 'True'
 
     load_path = args.load
     save_path = args.save
@@ -244,51 +242,43 @@ def main(args):
 
     optimizer_outer = optimizer_factory_outer[optimizer_outer_name]()
 
-    # Specify loss function (cross-entropy by default)
-    if blackbox_lambda is None:
-        loss_function = nn.CrossEntropyLoss(reduction='mean')
-    else:
-        loss_function = NegativeMRR(lmbda=blackbox_lambda)
-
-    # Specify outer loss function (cross-entropy)
-
-    loss_function_outer = nn.CrossEntropyLoss(reduction='mean')
+    # Specify loss function (cross-entropy by default), used for both inner and outer loops
+    loss_function = nn.CrossEntropyLoss(reduction='mean')
 
     # Masking
 
-    masks_outer = None
-    if do_masking_outer_loss:
-        mask_outer_sp, mask_outer_po, mask_outer_so = compute_masks(data.dev_triples,
+    masks_dev = None
+    if do_masking_dev_loss:
+        mask_dev_sp, mask_dev_po, mask_dev_so = compute_masks(data.dev_triples,
                                                                     data.train_triples + data.dev_triples,
                                                                     data.entity_to_idx,
                                                                     data.predicate_to_idx)
 
-        mask_outer_po = torch.tensor(mask_outer_po, dtype=torch.long, device=device)
-        mask_outer_sp = torch.tensor(mask_outer_sp, dtype=torch.long, device=device)
-        mask_outer_so = torch.tensor(mask_outer_so, dtype=torch.long, device=device)
-        masks_outer = [mask_outer_po, mask_outer_sp, mask_outer_so]
+        mask_dev_po = torch.tensor(mask_dev_po, dtype=torch.long, device=device)
+        mask_dev_sp = torch.tensor(mask_dev_sp, dtype=torch.long, device=device)
+        mask_dev_so = torch.tensor(mask_dev_so, dtype=torch.long, device=device)
+        masks_dev = [mask_dev_po, mask_dev_sp, mask_dev_so]
 
     # Training loop
 
-    best_loss_outer = np.inf
-    best_mean_accum_loss_outer = np.inf
+    best_loss_outer_dev = np.inf
+    best_mean_accum_loss_outer_dev = np.inf
 
-    losses_outer = []
-    losses_inner_final_epoch = []
+    mean_losses_outer_dev = []
+    mean_losses_outer_train = []
     e_vals = []
     p_vals = []
     reg_weight_vals = []
 
     for outer_step in range(outer_steps):
         torch.manual_seed(0)
-        accum_losses_outer = []
-        accum_losses_inner_final_epoch = []
+        accum_losses_outer_dev = []
+        accum_losses_outer_train = []
         for accum_step in range(accum_steps):
             # nn.Embedding using to a lookup table of embeddings (i.e. you can index entity_embeddings to return given entities embedding)
             # Nice explanation found in Escachator's answer here: https://stackoverflow.com/questions/50747947/embedding-in-pytorch
             entity_embeddings = nn.Embedding(data.nb_entities, rank).to(device)
             predicate_embeddings = nn.Embedding(data.nb_predicates, rank).to(device)
-            # print(entity_embeddings.weight[0,0])
 
             # Downscale the randomly initialised embeddings (initialised with N(0,1))
             # entity_embeddings.weight is a tensor of shape (num_embeddings, rank)
@@ -311,14 +301,14 @@ def main(args):
 
             diffopt = higher.get_diff_optim(optimizer, [e_graph, p_graph], track_higher_grads=True)
 
-            losses_inner = []
+            losses_inner_train = []
             losses_inner_dev = []
             for epoch_no in range(1, nb_epochs + 1):
                 train_log = {}  # dictionary to store training metrics for uploading to wandb for each epoch
                 batcher = Batcher(data.Xs, data.Xp, data.Xo, batch_size, 1, random_state)
 
-                epoch_loss_values = []  # to store loss for each batch in the epoch
-                epoch_loss_nonreg_values = []
+                batch_losses_train_withreg = []  # to store loss for each batch in the epoch
+                batch_losses_train_nonreg = []
 
                 for batch_no, (batch_start, batch_end) in enumerate(batcher.batches, 1):
 
@@ -329,7 +319,7 @@ def main(args):
                     xp_batch = torch.tensor(xp_batch, dtype=torch.long, device=device)
                     xo_batch = torch.tensor(xo_batch, dtype=torch.long, device=device)
 
-                    loss, factors = get_unreg_loss(xs_batch=xs_batch,
+                    batch_loss_train, factors = get_unreg_loss(xs_batch=xs_batch,
                                                    xp_batch=xp_batch,
                                                    xo_batch=xo_batch,
                                                    xi_batch=xi_batch,
@@ -339,57 +329,59 @@ def main(args):
                                                    model=model,
                                                    loss_function=loss_function)
 
-                    loss_nonreg_value = loss.item()
-                    epoch_loss_nonreg_values += [loss_nonreg_value]
+                    batch_loss_train_nonreg = batch_loss_train.item()
+                    batch_losses_train_nonreg += [batch_loss_train_nonreg]
 
                     if regularizer == "F2":
-                        loss += torch.exp(reg_weight_graph) * F2_reg(factors)
+                        batch_loss_train += torch.exp(reg_weight_graph) * F2_reg(factors)
 
                     if regularizer == "N3":
-                        loss += torch.exp(reg_weight_graph) * N3_reg(factors)
+                        batch_loss_train += torch.exp(reg_weight_graph) * N3_reg(factors)
 
-                    e_graph, p_graph = diffopt.step(loss, params=[e_graph, p_graph])
+                    e_graph, p_graph = diffopt.step(batch_loss_train, params=[e_graph, p_graph])
 
-                    loss_value = loss.item()
-                    epoch_loss_values += [loss_value]
+                    batch_loss_train_with_reg = batch_loss_train.item()
+                    batch_losses_train_withreg += [batch_loss_train_with_reg]
 
-                loss_mean, loss_std = np.mean(epoch_loss_values), np.std(epoch_loss_values)
-                loss_nonreg_mean, loss_nonreg_std = np.mean(epoch_loss_nonreg_values), np.std(epoch_loss_nonreg_values)
+                epoch_loss_train_mean, epoch_loss_train_std = np.mean(batch_losses_train_withreg), np.std(batch_losses_train_withreg)
+                epoch_loss_train_nonreg_mean, epoch_loss_train_nonreg_std = np.mean(batch_losses_train_nonreg), np.std(batch_losses_train_nonreg)
                 if not is_quiet:
                     # logger.info(f'Epoch {epoch_no}/{nb_epochs}\tLoss {loss_mean:.4f} ± {loss_std:.4f} ({loss_nonreg_mean:.4f} ± {loss_nonreg_std:.4f})')
-                    print(f'Epoch {epoch_no}/{nb_epochs}\tLoss {loss_mean:.5f} ± {loss_std:.5f} ({loss_nonreg_mean:.5f} ± {loss_nonreg_std:.5f})')
+                    print(f'Epoch {epoch_no}/{nb_epochs}\tLoss {epoch_loss_train_mean:.5f} ± {epoch_loss_train_std:.5f} ({epoch_loss_train_nonreg_mean:.5f} ± {epoch_loss_train_nonreg_std:.5f})')
 
-                losses_inner += [loss_nonreg_mean]
+                losses_inner_train += [epoch_loss_train_nonreg_mean]
 
-                xs_dev = torch.tensor(data.dev_Xs, dtype=torch.long, device=device)
-                xp_dev = torch.tensor(data.dev_Xp, dtype=torch.long, device=device)
-                xo_dev = torch.tensor(data.dev_Xo, dtype=torch.long, device=device)
-                xi_dev = data.dev_Xi
+                if outer_step == 0 or outer_step == outer_steps-1 or stopping_tol_inner is not None:
 
-                loss_inner_dev, _ = get_unreg_loss(xs_batch=xs_dev,
-                                               xp_batch=xp_dev,
-                                               xo_batch=xo_dev,
-                                               xi_batch=xi_dev,
-                                               corruption=corruption,
-                                               entity_embeddings=e_graph,
-                                               predicate_embeddings=p_graph,
-                                               model=model,
-                                               loss_function=loss_function_outer,
-                                               masks=masks_outer)
-                losses_inner_dev += [loss_inner_dev.item()]
+                    xs_dev = torch.tensor(data.dev_Xs, dtype=torch.long, device=device)
+                    xp_dev = torch.tensor(data.dev_Xp, dtype=torch.long, device=device)
+                    xo_dev = torch.tensor(data.dev_Xo, dtype=torch.long, device=device)
+                    xi_dev = data.dev_Xi
 
-                if stopping_tol_inner is not None and epoch_no > 20 and np.mean(losses_inner_dev[-10:-5]) - np.mean(losses_inner_dev[-5:]) < stopping_tol_inner:
-                    print(f"Num inner steps: {epoch_no}")
-                    break
+                    loss_inner_dev, _ = get_unreg_loss(xs_batch=xs_dev,
+                                                   xp_batch=xp_dev,
+                                                   xo_batch=xo_dev,
+                                                   xi_batch=xi_dev,
+                                                   corruption=corruption,
+                                                   entity_embeddings=e_graph,
+                                                   predicate_embeddings=p_graph,
+                                                   model=model,
+                                                   loss_function=loss_function,
+                                                   masks=masks_dev)
+                    losses_inner_dev += [loss_inner_dev.item()]
 
-            accum_losses_inner_final_epoch += [losses_inner[-1]]
+                    if stopping_tol_inner is not None and epoch_no > 20 and np.mean(losses_inner_dev[-10:-5]) - np.mean(losses_inner_dev[-5:]) < stopping_tol_inner:
+                        print(f"Num inner steps: {epoch_no}")
+                        break
+
+            accum_losses_outer_train += [losses_inner_train[-1]]
 
             xs_dev = torch.tensor(data.dev_Xs, dtype=torch.long, device=device)
             xp_dev = torch.tensor(data.dev_Xp, dtype=torch.long, device=device)
             xo_dev = torch.tensor(data.dev_Xo, dtype=torch.long, device=device)
             xi_dev = data.dev_Xi
 
-            loss_outer, _ = get_unreg_loss(xs_batch=xs_dev,
+            loss_outer_dev, _ = get_unreg_loss(xs_batch=xs_dev,
                                            xp_batch=xp_dev,
                                            xo_batch=xo_dev,
                                            xi_batch=xi_dev,
@@ -397,48 +389,47 @@ def main(args):
                                            entity_embeddings=e_graph,
                                            predicate_embeddings=p_graph,
                                            model=model,
-                                           loss_function=loss_function_outer,
-                                           masks=masks_outer)
+                                           loss_function=loss_function,
+                                           masks=masks_dev)
 
-            loss_outer.backward()
-            accum_losses_outer += [loss_outer.item()]
-            # print(reg_weight_graph.grad)
+            loss_outer_dev.backward()
+            accum_losses_outer_dev += [loss_outer_dev.item()]
 
             # store a copy of best embeddings
-            if loss_outer < best_loss_outer:
-                best_loss_outer = loss_outer
+            if loss_outer_dev < best_loss_outer_dev:
+                best_loss_outer_dev = loss_outer_dev
                 best_reg_weight = reg_weight_graph.detach().clone()
                 best_e_graph = e_graph.detach().clone()
                 best_p_graph = p_graph.detach().clone()
                 best_outer_step = outer_step
                 best_accum_step = accum_step
 
-        mean_accum_loss_inner_final_epoch = np.mean(accum_losses_inner_final_epoch)
-        mean_accum_loss_outer = np.mean(accum_losses_outer)
-        if mean_accum_loss_outer < best_mean_accum_loss_outer:
-            best_mean_accum_loss_outer = mean_accum_loss_outer
+        mean_accum_loss_outer_train = np.mean(accum_losses_outer_train)
+        mean_accum_loss_outer_dev = np.mean(accum_losses_outer_dev)
+        if mean_accum_loss_outer_dev < best_mean_accum_loss_outer_dev:
+            best_mean_accum_loss_outer_dev = mean_accum_loss_outer_dev
             best_mean_accum_reg_weight = reg_weight_graph.detach().clone()
             best_mean_accum_outer_step = outer_step
 
         # plots training and dev loss for a full inner loop
         if outer_step == 0 or outer_step == outer_steps-1:
             plt.figure()
-            plt.plot(losses_inner)
+            plt.plot(losses_inner_train)
             plt.plot(losses_inner_dev)
             plt.legend(["training loss", "dev loss"])
             plt.xlabel("Epoch (inner step)")
-            plt.ylabel("Inner loss")
-            plt.title(f"Inner loss by epoch for inner loop number {outer_step}")
+            plt.ylabel("Inner train loss")
+            plt.title(f"Inner training losses, for inner loop number {outer_step}")
             plt.show()
 
         # for plotting only
-        losses_inner_final_epoch += [mean_accum_loss_inner_final_epoch.item()]
-        losses_outer += [mean_accum_loss_outer.item()]
+        mean_losses_outer_train += [mean_accum_loss_outer_train.item()]
+        mean_losses_outer_dev += [mean_accum_loss_outer_dev.item()]
         e_vals += [torch.norm(e_graph.detach().clone())]
         p_vals += [torch.norm(p_graph.detach().clone())]
         reg_weight_vals += [reg_weight_graph.detach().clone()]
 
-        print(f"outer loss: {losses_outer[-1]}")
+        print(f"outer dev loss: {mean_losses_outer_dev[-1]}")
         print(f"reg param: {reg_weight_graph.item():.5f} [{np.exp(reg_weight_graph.item()):.7f}]")
 
         optimizer_outer.step()
@@ -450,12 +441,12 @@ def main(args):
         if save_path is not None:
             torch.save(parameters_lst.state_dict(), save_path)
 
-    # Best mean outer losses (calculated by averaging over the repeated gradient accumulation inner loops)
-    print(f"Best mean accum \touter loss: {best_mean_accum_loss_outer} \touter step: {best_mean_accum_outer_step} \treg param: {best_mean_accum_reg_weight}")
+    # Best mean outer dev losses (calculated by averaging over the repeated gradient accumulation inner loops)
+    print(f"Best mean accum \touter dev loss: {best_mean_accum_loss_outer_dev} \touter step: {best_mean_accum_outer_step} \treg param: {best_mean_accum_reg_weight}")
 
     # eval_log = {}
     # Final outer step metrics
-    print(f"Final \touter step: {outer_steps} \taccum step: {accum_steps} \treg param: {reg_weight_vals[-1]} \touter loss {losses_outer[-1]}")
+    print(f"Final \touter step: {outer_steps} \taccum step: {accum_steps} \treg param: {reg_weight_vals[-1]} \touter dev loss {mean_losses_outer_dev[-1]}")
     for triples, name in [(t, n) for t, n in triples_name_pairs if len(t) > 0]:
         metrics = evaluate(entity_embeddings=e_graph, predicate_embeddings=p_graph,
                            test_triples=triples, all_triples=data.all_triples,
@@ -468,8 +459,8 @@ def main(args):
         print(f'Final \t{name} results\t{metrics_to_str(metrics)}')
 
     # eval_log = {}
-    # Best outer step metrics (i.e. step with lowest outer loss)
-    print(f"Best \touter step: {best_outer_step+1} \taccum step: {best_accum_step} \treg param: {best_reg_weight} \touter loss {best_loss_outer}")
+    # Best outer step metrics (i.e. step with lowest outer dev loss)
+    print(f"Best \touter step: {best_outer_step+1} \taccum step: {best_accum_step} \treg param: {best_reg_weight} \touter dev loss {best_loss_outer_dev}")
     for triples, name in [(t, n) for t, n in triples_name_pairs if len(t) > 0]:
         metrics = evaluate(entity_embeddings=best_e_graph, predicate_embeddings=best_p_graph,
                            test_triples=triples, all_triples=data.all_triples,
@@ -491,17 +482,17 @@ def main(args):
         wandb.finish()
 
     plt.figure(2)
-    plt.plot(losses_inner_final_epoch)
+    plt.plot(mean_losses_outer_train)
     plt.xlabel("Outer step")
-    plt.ylabel("Inner loss at final epoch of inner loop on training set")
-    plt.title("Final epoch (inner step) loss by outer step")
+    plt.ylabel("Outer training loss")
+    plt.title("Outer training losses")
     plt.show()
 
     plt.figure(3)
-    plt.plot(losses_outer)
+    plt.plot(mean_losses_outer_dev)
     plt.xlabel("Outer step")
-    plt.ylabel("Outer loss on dev set")
-    plt.title(f"Outer losses\nembedding size: {embedding_size} | batch_size: {batch_size} | reg: {regularizer} | reg weight init: {regweight_init}\nepochs: {nb_epochs} | innerOpt: {optimizer_name} | outerOpt: {optimizer_outer_name} | LR: {learning_rate} | outerLR: {learning_rate_outer}")
+    plt.ylabel("Outer dev loss")
+    plt.title(f"Outer dev losses\nembedding size: {embedding_size} | batch_size: {batch_size} | reg: {regularizer} | reg weight init: {regweight_init}\nepochs: {nb_epochs} | innerOpt: {optimizer_name} | outerOpt: {optimizer_outer_name} | LR: {learning_rate} | outerLR: {learning_rate_outer}")
     plt.show()
 
     plt.figure(4)
