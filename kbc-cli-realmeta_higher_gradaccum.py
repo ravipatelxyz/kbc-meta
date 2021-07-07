@@ -254,9 +254,9 @@ def main(args):
                                                                     data.entity_to_idx,
                                                                     data.predicate_to_idx)
 
-        mask_dev_po = torch.tensor(mask_dev_po, dtype=torch.long, device=device)
-        mask_dev_sp = torch.tensor(mask_dev_sp, dtype=torch.long, device=device)
-        mask_dev_so = torch.tensor(mask_dev_so, dtype=torch.long, device=device)
+        mask_dev_po = torch.tensor(mask_dev_po, dtype=torch.long, device=device, requires_grad=False)
+        mask_dev_sp = torch.tensor(mask_dev_sp, dtype=torch.long, device=device, requires_grad=False)
+        mask_dev_so = torch.tensor(mask_dev_so, dtype=torch.long, device=device, requires_grad=False)
         masks_dev = [mask_dev_po, mask_dev_sp, mask_dev_so]
 
     # Training loop
@@ -483,26 +483,22 @@ def main(args):
 
     plt.figure(2)
     plt.plot(mean_losses_outer_train)
+    plt.plot(mean_losses_outer_dev)
+    plt.legend(["mean training loss", "mean validation loss"])
     plt.xlabel("Outer step")
-    plt.ylabel("Outer training loss")
-    plt.title("Outer training losses")
+    plt.ylabel("Mean outer loss")
+    plt.title(f"Mean outer losses\nembedding size: {embedding_size} | batch_size: {batch_size} | reg: {regularizer} | reg weight init: {regweight_init}\nepochs: {nb_epochs} | innerOpt: {optimizer_name} | outerOpt: {optimizer_outer_name} | LR: {learning_rate} | outerLR: {learning_rate_outer}")
+    plt.tight_layout()
     plt.show()
 
     plt.figure(3)
-    plt.plot(mean_losses_outer_dev)
-    plt.xlabel("Outer step")
-    plt.ylabel("Outer dev loss")
-    plt.title(f"Outer dev losses\nembedding size: {embedding_size} | batch_size: {batch_size} | reg: {regularizer} | reg weight init: {regweight_init}\nepochs: {nb_epochs} | innerOpt: {optimizer_name} | outerOpt: {optimizer_outer_name} | LR: {learning_rate} | outerLR: {learning_rate_outer}")
-    plt.show()
-
-    plt.figure(4)
     plt.plot(reg_weight_vals)
     plt.xlabel("Outer step")
     plt.ylabel("Regularisaton weight value")
     plt.title(f"Regularisation weight values (Start value: {regweight_init})")
     plt.show()
 
-    plt.figure(5)
+    plt.figure(4)
     plt.plot(e_vals)
     plt.plot(p_vals)
     plt.legend(["entities", "predicates"])
