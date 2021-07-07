@@ -54,13 +54,13 @@ def parse_args(argv):
     parser.add_argument('--model', '-m', action='store', type=str, default='distmult',
                         choices=['distmult', 'complex', 'transe'])
 
-    parser.add_argument('--embedding-size', '-k', action='store', type=int, default=100)
-    parser.add_argument('--batch-size', '-b', action='store', type=int, default=100)
-    parser.add_argument('--eval-batch-size', '-B', action='store', type=int, default=None)
+    parser.add_argument('--embedding_size', '-k', action='store', type=int, default=100)
+    parser.add_argument('--batch_size', '-b', action='store', type=int, default=100)
+    parser.add_argument('--eval_batch_size', '-B', action='store', type=int, default=None)
 
     # training params
     parser.add_argument('--epochs', '-e', action='store', type=int, default=100)
-    parser.add_argument('--learning-rate', '-l', action='store', type=float, default=0.1)
+    parser.add_argument('--learning_rate', '-l', action='store', type=float, default=0.1)
 
     parser.add_argument('--optimizer', '-o', action='store', type=str, default='adagrad',
                         choices=['adagrad', 'adam', 'sgd'])
@@ -73,16 +73,17 @@ def parse_args(argv):
 
     parser.add_argument('--seed', action='store', type=int, default=0)
 
-    parser.add_argument('--validate-every', '-V', action='store', type=int, default=None)
+    parser.add_argument('--validate_every', '-V', action='store', type=int, default=None)
 
-    parser.add_argument('--input-type', '-I', action='store', type=str, default='standard',
+    parser.add_argument('--input_type', '-I', action='store', type=str, default='standard',
                         choices=['standard', 'reciprocal'])
 
-    parser.add_argument('--blackbox-lambda', action='store', type=float, default=None)
+    parser.add_argument('--blackbox_lambda', action='store', type=float, default=None)
     parser.add_argument('--mask', action='store_true', default=False)
 
     parser.add_argument('--load', action='store', type=str, default=None)
     parser.add_argument('--save', action='store', type=str, default=None)
+    parser.add_argument('--use_wandb', '-wb', action='store', type=str, default='False', choices=['True', 'False'])
 
     parser.add_argument('--quiet', '-q', action='store_true', default=False)
 
@@ -126,11 +127,17 @@ def main(args):
 
     load_path = args.load
     save_path = args.save
+    use_wandb = args.use_wandb == 'True'
 
     is_quiet = args.quiet
 
     set_seed(seed)
     random_state = np.random.RandomState(seed)
+
+    if use_wandb:
+        wandb.init(entity="uclnlp", project="kbc_meta", group=f"base")
+        wandb.config.update(args)
+    print(' '.join(sys.argv))
 
     device = torch.device('cpu')
     if torch.cuda.is_available():
@@ -141,13 +148,15 @@ def main(args):
         device = xm.xla_device()
 
     logger.info(f'Device: {device}')
-    wandb.config.update({'device': device})
+    if use_wandb:
+        wandb.config.update({'device': device})
 
     data = Data(train_path=train_path, dev_path=dev_path, test_path=test_path,
                 test_i_path=test_i_path, test_ii_path=test_ii_path, input_type=input_type)
 
     # the .dev_triples attributes here contain ID strings
     triples_name_pairs = [
+        (data.train_triples, 'train'),
         (data.dev_triples, 'dev'),
         (data.test_triples, 'test'),
         (data.test_i_triples, 'test-I'),
@@ -159,8 +168,8 @@ def main(args):
 
     # nn.Embedding using to a lookup table of embeddings (i.e. you can index entity_embeddings to return given entities embedding)
     # Nice explanation found in Escachator's answer here: https://stackoverflow.com/questions/50747947/embedding-in-pytorch
-    entity_embeddings = nn.Embedding(data.nb_entities, rank, sparse=True).to(device)
-    predicate_embeddings = nn.Embedding(data.nb_predicates, rank, sparse=True).to(device)
+    entity_embeddings = nn.Embedding(data.nb_entities, rank, sparse=False).to(device)
+    predicate_embeddings = nn.Embedding(data.nb_predicates, rank, sparse=False).to(device)
 
     # Downscale the randomly initialised embeddings (initialised with N(0,1))
     entity_embeddings.weight.data *= init_size
@@ -331,7 +340,8 @@ def main(args):
                 best_mrr = train_log['dev_MRR']
                 best_log=train_log
 
-        wandb.log(train_log, step=epoch_no, commit=True)
+        if use_wandb:
+            wandb.log(train_log, step=epoch_no, commit=True)
 
     if last_logged_epoch != nb_epochs:
         eval_log = {}
@@ -351,16 +361,20 @@ def main(args):
             best_mrr = eval_log['dev_MRR']
             best_log=eval_log
 
-        wandb.log(eval_log, step=nb_epochs, commit=True)
+        if use_wandb:
+            wandb.log(eval_log, step=nb_epochs, commit=True)
 
-    wandb.run.summary.update(best_log)
+    if use_wandb:
+        wandb.run.summary.update(best_log)
 
     if save_path is not None:
         torch.save(parameters_lst.state_dict(), save_path)
 
-    wandb.save(f"{save_path[:-4]}.log")
-    wandb.save("kbc_meta/logs/array.err")
-    wandb.save("kbc_meta/logs/array.out")
+    if use_wandb:
+        wandb.save(f"{save_path[:-4]}.log")
+        wandb.save("kbc_meta/logs/array.err")
+        wandb.save("kbc_meta/logs/array.out")
+        wandb.finish()
 
     logger.info("Training finished")
     # print("Training finished")
@@ -369,8 +383,4 @@ def main(args):
 if __name__ == '__main__':
     logging.basicConfig(stream=sys.stdout, level=logging.INFO)
     args = parse_args(sys.argv[1:])
-    wandb.init(entity="uclnlp", project="kbc_meta", group=f"base")
-    wandb.config.update(args)
-    print(' '.join(sys.argv))
     main(args)
-    wandb.finish()
