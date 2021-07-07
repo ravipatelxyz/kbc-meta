@@ -120,7 +120,7 @@ def parse_args(argv):
     parser.add_argument('--corruption', '-c', action='store', type=str, default='so',
                         choices=['so', 'spo'])
     parser.add_argument('--seed', action='store', type=int, default=0)
-    parser.add_argument('--validate_every', '-V', action='store', type=int, default=None)
+    parser.add_argument('--validate_all', '-V', action='store', type=str, default='False', choices=['True', 'False'])
     parser.add_argument('--input_type', '-I', action='store', type=str, default='standard',
                         choices=['standard', 'reciprocal'])
     parser.add_argument('--do_masking_dev_loss', '-md', action='store', type=str, default='False', choices=['True', 'False'])
@@ -163,7 +163,7 @@ def main(args):
     regularizer = args.regularizer
     regweight_init = args.regweight_init
     corruption = args.corruption
-    validate_every = args.validate_every
+    validate_all = args.validate_all == 'True'
     input_type = args.input_type
 
     optimizer_outer_name = args.optimizer_outer
@@ -353,7 +353,7 @@ def main(args):
             epoch_loss_train_nonreg_mean = np.mean(batch_losses_train_nonreg)
             losses_inner_train += [epoch_loss_train_nonreg_mean]
 
-            if outer_step == 0 or outer_step == outer_steps - 1 or stopping_tol_inner is not None:
+            if outer_step == 0 or outer_step == outer_steps - 1 or stopping_tol_inner is not None or validate_all:
 
                 xs_dev = torch.tensor(data.dev_Xs, dtype=torch.long, device=device)
                 xp_dev = torch.tensor(data.dev_Xp, dtype=torch.long, device=device)
@@ -381,16 +381,15 @@ def main(args):
                     break
 
         if outer_step == 0 or outer_step == outer_steps-1:
-            plt.figure()
-            plt.plot(losses_inner_train)
-            plt.plot(losses_inner_dev)
-            plt.legend(["training loss", "dev loss"])
+            plt.plot(losses_inner_train, 'k-')
+            plt.plot(losses_inner_dev, 'k--')
+            plt.legend(["training loss", "validation loss"])
             plt.xlabel("Epoch (inner step)")
             plt.ylabel("Inner loss")
-            plt.title(f"Inner losses, for inner loop number {outer_step}")
+            plt.title(f"Inner losses, for inner loop number {outer_step+1}", fontsize=14, fontweight='bold')
             plt.tight_layout()
             if save_figs:
-                filename = f"realmeta_nations_innertrainloss_outerstep{outer_step}.png"
+                filename = f"realmeta_nations_innertrainloss_outerstep{outer_step+1}.png"
                 if use_wandb:
                     plt.savefig(os.path.join(wandb.run.dir, filename))
                 else:
@@ -442,6 +441,8 @@ def main(args):
             best_e_graph = e_graph.detach().clone()
             best_p_graph = p_graph.detach().clone()
             best_outer_step = outer_step
+            best_losses_inner_train = losses_inner_train
+            best_losses_inner_dev = losses_inner_dev
             if use_wandb:
                 best_log = outer_log
 
@@ -481,13 +482,30 @@ def main(args):
     if use_wandb:
         wandb.run.summary.update(metrics_log)
 
-    plt.figure(2)
-    plt.plot(losses_outer_train)
-    plt.plot(losses_outer_dev)
+    plt.figure()
+    plt.plot(best_losses_inner_train, 'k-')
+    print(best_losses_inner_dev)
+    plt.plot(best_losses_inner_dev, 'k--')
+    plt.legend(["training loss", "validation loss"])
+    plt.xlabel("Epoch (inner step)")
+    plt.ylabel("Inner loss")
+    plt.title(f"Inner losses, for inner loop number {best_outer_step + 1}", fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    if save_figs:
+        filename = f"realmeta_nations_innertrainloss_outerstep{best_outer_step + 1}.png"
+        if use_wandb:
+            plt.savefig(os.path.join(wandb.run.dir, filename))
+        else:
+            plt.savefig(f"./realmeta_nations/plots/{filename}")
+    plt.show()
+
+    plt.figure()
+    plt.plot(losses_outer_train, 'k-')
+    plt.plot(losses_outer_dev, 'k--')
     plt.legend(["training loss", "validation loss"])
     plt.xlabel("Outer step")
     plt.ylabel("Outer loss")
-    plt.title(f"Outer losses\nembedding size: {embedding_size} | batch_size: {batch_size} | reg: {regularizer} | reg weight init: {regweight_init}\nepochs: {nb_epochs} | innerOpt: {optimizer_name} | outerOpt: {optimizer_outer_name} | LR: {learning_rate} | outerLR: {learning_rate_outer}")
+    plt.title(f"Outer losses", fontsize=14, fontweight='bold')
     plt.tight_layout()
     if save_figs:
         filename = f"realmeta_nations_outer_losses.png"
@@ -497,11 +515,11 @@ def main(args):
             plt.savefig(f"./realmeta_nations/plots/{filename}")
     plt.show()
 
-    plt.figure(3)
-    plt.plot(reg_weight_vals)
+    plt.figure()
+    plt.plot(np.exp(reg_weight_vals), 'k-')
     plt.xlabel("Outer step")
-    plt.ylabel("Regularisaton weight value")
-    plt.title(f"Regularisation weight values (Start value: {regweight_init})")
+    plt.ylabel("Regularisation weight value")
+    plt.title(f"{regularizer} regularisation weight values", fontsize=14, fontweight='bold')
     plt.tight_layout()
     if save_figs:
         filename = f"realmeta_nations_reg_weights.png"
@@ -511,13 +529,13 @@ def main(args):
             plt.savefig(f"./realmeta_nations/plots/{filename}")
     plt.show()
 
-    plt.figure(4)
-    plt.plot(e_vals)
-    plt.plot(p_vals)
+    plt.figure()
+    plt.plot(e_vals, 'k-')
+    plt.plot(p_vals, 'k--')
     plt.legend(["entities", "predicates"])
     plt.xlabel("Outer step")
-    plt.ylabel("L2 norm of embeddings")
-    plt.title("Entity and predicate embedding norms")
+    plt.ylabel("$||$embeddings$||_2$")
+    plt.title("Entity and predicate embedding L2-norms", fontsize=14, fontweight='bold')
     plt.tight_layout()
     if save_figs:
         filename = f"realmeta_nations_entity_L2norms.png"
