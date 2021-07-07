@@ -116,8 +116,6 @@ def parse_args(argv):
                         choices=['adagrad', 'adam', 'sgd'])
     parser.add_argument('--regularizer', '-re', type=str, choices=["F2", "N3"], default="F2")
     parser.add_argument('--regweight_init', '-rw', type=float, default=0.001)
-    # parser.add_argument('--F2', action='store', type=float, default=None)
-    # parser.add_argument('--N3', action='store', type=float, default=None)
 
     parser.add_argument('--corruption', '-c', action='store', type=str, default='so',
                         choices=['so', 'spo'])
@@ -125,7 +123,9 @@ def parse_args(argv):
     parser.add_argument('--validate_every', '-V', action='store', type=int, default=None)
     parser.add_argument('--input_type', '-I', action='store', type=str, default='standard',
                         choices=['standard', 'reciprocal'])
-    parser.add_argument('--do_masking_outer_loss', '-om', action='store', type=str, default='False', choices=['True', 'False'])
+    parser.add_argument('--do_masking_dev_loss', '-md', action='store', type=str, default='False', choices=['True', 'False'])
+    parser.add_argument('--do_masking_train_loss', '-mt', action='store', type=str, default='False',
+                        choices=['True', 'False'])
 
     # training params (outer loop)
     parser.add_argument('--optimizer_outer', '-oo', action='store', type=str, default='adam',
@@ -160,8 +160,6 @@ def main(args):
     seed = args.seed
     learning_rate = args.learning_rate
     stopping_tol_inner = args.stopping_tol_inner
-    # F2_weight = args.F2
-    # N3_weight = args.N3
     regularizer = args.regularizer
     regweight_init = args.regweight_init
     corruption = args.corruption
@@ -172,7 +170,8 @@ def main(args):
     learning_rate_outer = args.learning_rate_outer
     outer_steps = args.outer_steps
     stopping_tol_outer = args.stopping_tol_outer
-    do_masking_dev_loss = args.do_masking_outer_loss == 'True'
+    do_masking_dev_loss = args.do_masking_dev_loss == 'True'
+    do_masking_train_loss = args.do_masking_train_loss == 'True'
 
     load_path = args.load
     save_path = args.save
@@ -187,6 +186,7 @@ def main(args):
     if use_wandb:
         wandb.init(entity="uclnlp", project="kbc_meta", group=f"realmeta_nations")
         wandb.config.update(args)
+    print(' '.join(sys.argv))
 
     device = torch.device('cpu')
     if torch.cuda.is_available():
@@ -256,6 +256,18 @@ def main(args):
 
     # Masking
 
+    masks_train = None
+    if do_masking_train_loss:
+        mask_train_sp, mask_train_po, mask_train_so = compute_masks(data.train_triples,
+                                                                    data.train_triples + data.dev_triples,
+                                                                    data.entity_to_idx,
+                                                                    data.predicate_to_idx)
+
+        mask_train_po = torch.tensor(mask_train_po, dtype=torch.long, device=device, requires_grad=False)
+        mask_train_sp = torch.tensor(mask_train_sp, dtype=torch.long, device=device, requires_grad=False)
+        mask_train_so = torch.tensor(mask_train_so, dtype=torch.long, device=device, requires_grad=False)
+        masks_train = [mask_train_po, mask_train_sp, mask_train_so]
+
     masks_dev = None
     if do_masking_dev_loss:
         mask_dev_sp, mask_dev_po, mask_dev_so = compute_masks(data.dev_triples,
@@ -263,9 +275,9 @@ def main(args):
                                                                     data.entity_to_idx,
                                                                     data.predicate_to_idx)
 
-        mask_dev_po = torch.tensor(mask_dev_po, dtype=torch.long, device=device)
-        mask_dev_sp = torch.tensor(mask_dev_sp, dtype=torch.long, device=device)
-        mask_dev_so = torch.tensor(mask_dev_so, dtype=torch.long, device=device)
+        mask_dev_po = torch.tensor(mask_dev_po, dtype=torch.long, device=device, requires_grad=False)
+        mask_dev_sp = torch.tensor(mask_dev_sp, dtype=torch.long, device=device, requires_grad=False)
+        mask_dev_so = torch.tensor(mask_dev_so, dtype=torch.long, device=device, requires_grad=False)
         masks_dev = [mask_dev_po, mask_dev_sp, mask_dev_so]
 
     # Training loop
@@ -314,14 +326,15 @@ def main(args):
                 xo_batch = torch.tensor(xo_batch, dtype=torch.long, device=device)
 
                 batch_loss_train, factors = get_unreg_loss(xs_batch=xs_batch,
-                                               xp_batch=xp_batch,
-                                               xo_batch=xo_batch,
-                                               xi_batch=xi_batch,
-                                               corruption=corruption,
-                                               entity_embeddings=e_graph,
-                                               predicate_embeddings=p_graph,
-                                               model=model,
-                                               loss_function=loss_function)
+                                                           xp_batch=xp_batch,
+                                                           xo_batch=xo_batch,
+                                                           xi_batch=xi_batch,
+                                                           corruption=corruption,
+                                                           entity_embeddings=e_graph,
+                                                           predicate_embeddings=p_graph,
+                                                           model=model,
+                                                           loss_function=loss_function,
+                                                           masks=masks_train)
 
                 batch_loss_train_nonreg = batch_loss_train.item()
                 batch_losses_train_nonreg += [batch_loss_train_nonreg]
@@ -373,8 +386,8 @@ def main(args):
             plt.plot(losses_inner_dev)
             plt.legend(["training loss", "dev loss"])
             plt.xlabel("Epoch (inner step)")
-            plt.ylabel("Inner train loss")
-            plt.title(f"Inner training losses, for inner loop number {outer_step}")
+            plt.ylabel("Inner loss")
+            plt.title(f"Inner losses, for inner loop number {outer_step}")
             plt.tight_layout()
             if save_figs:
                 filename = f"realmeta_nations_innertrainloss_outerstep{outer_step}.png"
@@ -447,7 +460,7 @@ def main(args):
         # logger.info(f'Final \t{name} results\t{metrics_to_str(metrics_final)}')
         if use_wandb:
             metrics_final_new = {f'final_{name}_{k}': v for k, v in metrics_final.items()}  # hack to get different keys for logging
-            metrics_final_new.update({f'final_{k}': v for k, v in outer_log.items()}) #todo change outer_log to have keys as 'final_...'
+            metrics_final_new.update({f'final_{k}': v for k, v in outer_log.items()})
             metrics_log.update(metrics_final_new)
         print(f'Final \t{name} results\t{metrics_to_str(metrics_final)}')
 
@@ -461,16 +474,12 @@ def main(args):
         # logger.info(f'Best \t{name} results\t{metrics_to_str(metrics_best)}')
         if use_wandb:
             metrics_best_new = {f'best_{name}_{k}': v for k, v in metrics_best.items()}  # hack to get different keys for logging
-            metrics_best_new.update({f'best_{k}': v for k, v in best_log.items()}) #todo change outer_log to have keys as 'final_...'
+            metrics_best_new.update({f'best_{k}': v for k, v in best_log.items()})
             metrics_log.update(metrics_best_new)
         print(f'Best \t{name} results \t{metrics_to_str(metrics_best)}')
 
     if use_wandb:
         wandb.run.summary.update(metrics_log)
-        # wandb.save(f"{save_path[:-4]}.log")
-        # wandb.save("kbc_meta/logs/array.err")
-        # wandb.save("kbc_meta/logs/array.out")
-        wandb.finish()
 
     plt.figure(2)
     plt.plot(losses_outer_train)
@@ -519,10 +528,14 @@ def main(args):
     plt.show()
 
     logger.info("Training finished")
+    if use_wandb:
+        # wandb.save(f"{save_path[:-4]}.log")
+        # wandb.save("kbc_meta/logs/array.err")
+        # wandb.save("kbc_meta/logs/array.out")
+        wandb.finish()
 
 
 if __name__ == '__main__':
     logging.basicConfig(stream=sys.stdout, level=logging.INFO)
     args = parse_args(sys.argv[1:])
-    print(' '.join(sys.argv))
     main(args)
