@@ -31,7 +31,6 @@ import wandb
 logger = logging.getLogger(os.path.basename(sys.argv[0]))
 torch.set_num_threads(multiprocessing.cpu_count())
 
-
 def metrics_to_str(metrics):
     def m(i: int) -> str:
         key = f"hits@{i}"
@@ -313,6 +312,7 @@ def main(args):
                 logger.info(f'Epoch {epoch_no}/{nb_epochs}\tBatch {batch_no}/{nb_batches}\tLoss {loss_value:.6f} ({loss_nonreg_value:.6f})')
                 # print(f'Epoch {epoch_no}/{nb_epochs}\tBatch {batch_no}/{nb_batches}\tLoss {loss_value:.6f} ({loss_nonreg_value:.6f})')
 
+        print(torch.min(torch.abs(entity_embeddings.weight)))
         loss_mean, loss_std = np.mean(epoch_loss_values), np.std(epoch_loss_values)
         loss_nonreg_mean, loss_nonreg_std = np.mean(epoch_loss_nonreg_values), np.std(epoch_loss_nonreg_values)
 

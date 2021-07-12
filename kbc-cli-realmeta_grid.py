@@ -10,7 +10,6 @@ from typing import List, Tuple
 
 import multiprocessing
 
-import higher
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -32,6 +31,7 @@ from kbc.blackbox import NegativeMRR
 
 import logging
 import wandb
+import time
 
 logger = logging.getLogger(os.path.basename(sys.argv[0]))
 torch.set_num_threads(multiprocessing.cpu_count())
@@ -153,8 +153,6 @@ def main(args):
     seed = args.seed
     learning_rate = args.learning_rate
     stopping_tol_inner = args.stopping_tol_inner
-    # F2_weight = args.F2
-    # N3_weight = args.N3
     regularizer = args.regularizer
     regweight_init = args.regweight_init
     corruption = args.corruption
@@ -169,15 +167,17 @@ def main(args):
     save_figs = args.save_figs == 'True'
     use_wandb = args.use_wandb == 'True'
 
+    timestr = time.strftime("%Y%m%d-%H%M%S")
+
     is_quiet = args.quiet
 
     set_seed(seed)
     random_state = np.random.RandomState(seed)
 
     if use_wandb:
-        wandb.init(entity="uclnlp", project="kbc_meta", group=f"realmeta_nations")
+        wandb.init(entity="uclnlp", project="kbc_meta", group=f"realmeta_grid_nations")
         wandb.config.update(args)
-    print(' '.join(sys.argv))
+    logger.info(' '.join(sys.argv))
 
     device = torch.device('cpu')
     if torch.cuda.is_available():
@@ -353,7 +353,7 @@ def main(args):
             inner_log = {"train_loss_inner": losses_inner_train[-1],
                          "dev_loss_inner": losses_inner_dev[-1],
                          "L2_norm_entity_embeddings": e_vals[-1],
-                         "L2_norm_predicate_embeddings": p_vals[-1]
+                         "L2_norm_predicate_embeddings": p_vals[-1],
                          }
             if use_wandb:
                 wandb.log(inner_log, step=epoch_no)
@@ -365,24 +365,25 @@ def main(args):
                 best_p_graph = p_graph.detach().clone()
                 best_epoch = epoch_no
                 if use_wandb:
-                    best_log = inner_log.update({"Completed_epochs": epoch_no})
+                    best_log = inner_log
+                    best_log.update({"completed_inner_steps": epoch_no})
 
-            if stopping_tol_inner is not None and epoch_no > 20 and np.mean(losses_inner_dev[-10:-5]) - np.mean(
+            if stopping_tol_inner is not None and epoch_no > 15 and np.mean(losses_inner_dev[-10:-5]) - np.mean(
                     losses_inner_dev[-5:]) < stopping_tol_inner:
                 break
 
-        print(f"train loss: {epoch_loss_train_nonreg_mean} \tdev loss:{loss_inner_dev}")
+            logger.info(f"train loss: {epoch_loss_train_nonreg_mean} \tdev loss:{loss_inner_dev}")
 
     plt.figure()
-    plt.plot(losses_inner_train)
-    plt.plot(losses_inner_dev)
-    plt.legend(["training loss", "dev loss"])
+    plt.plot(losses_inner_train, 'k-')
+    plt.plot(losses_inner_dev, 'k--')
+    plt.legend(["training loss", "masked validation loss"])
     plt.xlabel("Epoch (inner step)")
     plt.ylabel("Inner loss")
-    plt.title(f"Inner losses")
+    plt.title(f"Inner losses", fontsize=14, fontweight='bold')
     plt.tight_layout()
     if save_figs:
-        filename = f"realmeta_nations_innertrainloss.png"
+        filename = f"realmeta_nations_innerloss_{timestr}.png"
         if use_wandb:
             plt.savefig(os.path.join(wandb.run.dir, filename))
         else:
@@ -391,32 +392,31 @@ def main(args):
 
     metrics_log = {}
     # Final inner step metrics
-    print(f"Final \tinner step: {nb_epochs} \tinner dev loss {losses_inner_dev[-1]}")
+    logger.info(f"Final \tinner step: {nb_epochs} \tinner dev loss {losses_inner_dev[-1]}")
     for triples, name in [(t, n) for t, n in triples_name_pairs if len(t) > 0]:
         metrics_final = evaluate(entity_embeddings=e_graph, predicate_embeddings=p_graph,
                            test_triples=triples, all_triples=data.all_triples,
                            entity_to_index=data.entity_to_idx, predicate_to_index=data.predicate_to_idx,
                            model=model, batch_size=eval_batch_size, device=device)
-        # logger.info(f'Final \t{name} results\t{metrics_to_str(metrics_final)}')
         if use_wandb:
             metrics_final_new = {f'final_{name}_{k}': v for k, v in metrics_final.items()}  # hack to get different keys for logging
             metrics_final_new.update({f'final_{k}': v for k, v in inner_log.items()})
+            metrics_final_new.update({"final_completed_inner_steps": nb_epochs})
             metrics_log.update(metrics_final_new)
-        print(f'Final \t{name} results\t{metrics_to_str(metrics_final)}')
+        logger.info(f'Final \t{name} results\t{metrics_to_str(metrics_final)}')
 
     # Best inner step metrics (i.e. step with lowest inner dev loss)
-    print(f"Best \tinner step: {best_epoch+1} \tinner dev loss {best_loss_inner_dev}")
+    logger.info(f"Best \tinner step: {best_epoch+1} \tinner dev loss {best_loss_inner_dev}")
     for triples, name in [(t, n) for t, n in triples_name_pairs if len(t) > 0]:
         metrics_best = evaluate(entity_embeddings=best_e_graph, predicate_embeddings=best_p_graph,
                            test_triples=triples, all_triples=data.all_triples,
                            entity_to_index=data.entity_to_idx, predicate_to_index=data.predicate_to_idx,
                            model=model, batch_size=eval_batch_size, device=device)
-        # logger.info(f'Best \t{name} results\t{metrics_to_str(metrics_best)}')
         if use_wandb:
             metrics_best_new = {f'best_{name}_{k}': v for k, v in metrics_best.items()}  # hack to get different keys for logging
             metrics_best_new.update({f'best_{k}': v for k, v in best_log.items()})
             metrics_log.update(metrics_best_new)
-        print(f'Best \t{name} results \t{metrics_to_str(metrics_best)}')
+        logger.info(f'Best \t{name} results\t{metrics_to_str(metrics_best)}')
 
     if use_wandb:
         wandb.run.summary.update(metrics_log)

@@ -28,10 +28,9 @@ from kbc.models import DistMult, ComplEx, TransE
 from kbc.regularizers import F2, N3
 from kbc.evaluation import evaluate
 
-from kbc.blackbox import NegativeMRR
-
 import logging
 import wandb
+import time
 
 logger = logging.getLogger(os.path.basename(sys.argv[0]))
 torch.set_num_threads(multiprocessing.cpu_count())
@@ -178,15 +177,17 @@ def main(args):
     save_figs = args.save_figs == 'True'
     use_wandb = args.use_wandb == 'True'
 
+    timestr = time.strftime("%Y%m%d-%H%M%S")
+
     is_quiet = args.quiet
 
     set_seed(seed)
     random_state = np.random.RandomState(seed)
 
     if use_wandb:
-        wandb.init(entity="uclnlp", project="kbc_meta", group=f"realmeta_nations")
+        wandb.init(entity="uclnlp", project="kbc_meta", group=f"realmeta_single_nations")
         wandb.config.update(args)
-    print(' '.join(sys.argv))
+    logger.info(' '.join(sys.argv))
 
     device = torch.device('cpu')
     if torch.cuda.is_available():
@@ -377,19 +378,19 @@ def main(args):
                         losses_inner_dev[-5:]) < stopping_tol_inner:
                     completed_epochs = epoch_no
                     if not is_quiet:
-                        print(f"Num inner steps: {epoch_no}")
+                        logger.info(f"Num inner steps: {epoch_no}")
                     break
 
         if outer_step == 0 or outer_step == outer_steps-1:
             plt.plot(losses_inner_train, 'k-')
             plt.plot(losses_inner_dev, 'k--')
-            plt.legend(["training loss", "validation loss"])
+            plt.legend(["training loss", "masked validation loss"])
             plt.xlabel("Epoch (inner step)")
             plt.ylabel("Inner loss")
             plt.title(f"Inner losses, for inner loop number {outer_step+1}", fontsize=14, fontweight='bold')
             plt.tight_layout()
             if save_figs:
-                filename = f"realmeta_nations_innertrainloss_outerstep{outer_step+1}.png"
+                filename = f"realmeta_nations_innerloss_outerstep{outer_step+1}_{timestr}.png"
                 if use_wandb:
                     plt.savefig(os.path.join(wandb.run.dir, filename))
                 else:
@@ -431,8 +432,8 @@ def main(args):
             wandb.log(outer_log, step=outer_step)
 
         if not is_quiet:
-            print(f"outer dev loss: {loss_outer_dev.item()}")
-            print(f"reg param: {reg_weight_graph.item():.5f} [{np.exp(reg_weight_graph.item()):.7f}]")
+            logger.info(f"outer dev loss: {loss_outer_dev.item()}")
+            logger.info(f"reg param: {reg_weight_graph.item():.5f} [{np.exp(reg_weight_graph.item()):.7f}]")
 
         # store a copy of best embeddings
         if loss_outer_dev < best_loss_outer_dev:
@@ -452,47 +453,44 @@ def main(args):
 
     metrics_log = {}
     # Final outer step metrics
-    print(f"Final \touter step: {outer_steps} \treg param: {reg_weight_vals[-1]} \touter dev loss {losses_outer_dev[-1]}")
+    logger.info(f"Final \touter step: {outer_steps} \treg param: {reg_weight_vals[-1]} \touter dev loss {losses_outer_dev[-1]}")
     for triples, name in [(t, n) for t, n in triples_name_pairs if len(t) > 0]:
-        metrics_final = evaluate(entity_embeddings=e_graph, predicate_embeddings=p_graph,
+        metrics_final = evaluate(entity_embeddings=e_graph.detach().clone(), predicate_embeddings=p_graph.detach().clone(),
                            test_triples=triples, all_triples=data.all_triples,
                            entity_to_index=data.entity_to_idx, predicate_to_index=data.predicate_to_idx,
                            model=model, batch_size=eval_batch_size, device=device)
-        # logger.info(f'Final \t{name} results\t{metrics_to_str(metrics_final)}')
         if use_wandb:
             metrics_final_new = {f'final_{name}_{k}': v for k, v in metrics_final.items()}  # hack to get different keys for logging
             metrics_final_new.update({f'final_{k}': v for k, v in outer_log.items()})
             metrics_log.update(metrics_final_new)
-        print(f'Final \t{name} results\t{metrics_to_str(metrics_final)}')
+        logger.info(f'Final \t{name} results\t{metrics_to_str(metrics_final)}')
 
     # Best outer step metrics (i.e. step with lowest outer dev loss)
-    print(f"Best \touter step: {best_outer_step+1} \treg param: {best_reg_weight} \touter dev loss {best_loss_outer_dev}")
+    logger.info(f"Best \touter step: {best_outer_step+1} \treg param: {best_reg_weight} \touter dev loss {best_loss_outer_dev}")
     for triples, name in [(t, n) for t, n in triples_name_pairs if len(t) > 0]:
         metrics_best = evaluate(entity_embeddings=best_e_graph, predicate_embeddings=best_p_graph,
                            test_triples=triples, all_triples=data.all_triples,
                            entity_to_index=data.entity_to_idx, predicate_to_index=data.predicate_to_idx,
                            model=model, batch_size=eval_batch_size, device=device)
-        # logger.info(f'Best \t{name} results\t{metrics_to_str(metrics_best)}')
         if use_wandb:
             metrics_best_new = {f'best_{name}_{k}': v for k, v in metrics_best.items()}  # hack to get different keys for logging
             metrics_best_new.update({f'best_{k}': v for k, v in best_log.items()})
             metrics_log.update(metrics_best_new)
-        print(f'Best \t{name} results \t{metrics_to_str(metrics_best)}')
+        logger.info(f'Best \t{name} results\t{metrics_to_str(metrics_best)}')
 
     if use_wandb:
         wandb.run.summary.update(metrics_log)
 
     plt.figure()
     plt.plot(best_losses_inner_train, 'k-')
-    print(best_losses_inner_dev)
     plt.plot(best_losses_inner_dev, 'k--')
-    plt.legend(["training loss", "validation loss"])
+    plt.legend(["training loss", "masked validation loss"])
     plt.xlabel("Epoch (inner step)")
     plt.ylabel("Inner loss")
     plt.title(f"Inner losses, for inner loop number {best_outer_step + 1}", fontsize=14, fontweight='bold')
     plt.tight_layout()
     if save_figs:
-        filename = f"realmeta_nations_innertrainloss_outerstep{best_outer_step + 1}.png"
+        filename = f"realmeta_nations_innertrainloss_outerstep{best_outer_step + 1}_{timestr}.png"
         if use_wandb:
             plt.savefig(os.path.join(wandb.run.dir, filename))
         else:
@@ -502,13 +500,13 @@ def main(args):
     plt.figure()
     plt.plot(losses_outer_train, 'k-')
     plt.plot(losses_outer_dev, 'k--')
-    plt.legend(["training loss", "validation loss"])
+    plt.legend(["training loss", "masked validation loss"])
     plt.xlabel("Outer step")
     plt.ylabel("Outer loss")
     plt.title(f"Outer losses", fontsize=14, fontweight='bold')
     plt.tight_layout()
     if save_figs:
-        filename = f"realmeta_nations_outer_losses.png"
+        filename = f"realmeta_nations_outer_losses_{timestr}.png"
         if use_wandb:
             plt.savefig(os.path.join(wandb.run.dir, filename))
         else:
@@ -522,7 +520,7 @@ def main(args):
     plt.title(f"{regularizer} regularisation weight values", fontsize=14, fontweight='bold')
     plt.tight_layout()
     if save_figs:
-        filename = f"realmeta_nations_reg_weights.png"
+        filename = f"realmeta_nations_reg_weights_{timestr}.png"
         if use_wandb:
             plt.savefig(os.path.join(wandb.run.dir, filename))
         else:
@@ -538,7 +536,7 @@ def main(args):
     plt.title("Entity and predicate embedding L2-norms", fontsize=14, fontweight='bold')
     plt.tight_layout()
     if save_figs:
-        filename = f"realmeta_nations_entity_L2norms.png"
+        filename = f"realmeta_nations_entity_L2norms_{timestr}.png"
         if use_wandb:
             plt.savefig(os.path.join(wandb.run.dir, filename))
         else:
