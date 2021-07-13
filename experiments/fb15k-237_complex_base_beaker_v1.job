@@ -11,7 +11,7 @@
 export LANG="en_US.utf8"
 export LANGUAGE="en_US:en"
 source $HOME/.activate_conda
-export WANDB_API_KEY = 9903f079d28315317cc996b863de147f9135a2bf
+export WANDB_API_KEY=9903f079d28315317cc996b863de147f9135a2bf
 cd $HOME/kbc_meta
 
 

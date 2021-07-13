@@ -34,7 +34,7 @@ import time
 
 logger = logging.getLogger(os.path.basename(sys.argv[0]))
 torch.set_num_threads(multiprocessing.cpu_count())
-
+plt.rcParams['figure.dpi'] = 200
 
 def metrics_to_str(metrics):
     def m(i: int) -> str:
@@ -197,6 +197,8 @@ def main(args):
         torch.set_default_tensor_type('torch.FloatTensor')
         device = xm.xla_device()
 
+    print(device)
+
     logger.info(f'Device: {device}')
     if use_wandb:
         wandb.config.update({'device': device})
@@ -242,7 +244,7 @@ def main(args):
 
     # regularizer_weights = nn.Embedding(1, 1).to(device)
     # reg_weight_graph = deepcopy(regularizer_weights.weight)
-    reg_weight_graph = torch.tensor(regweight_init, requires_grad=True).to(device)
+    reg_weight_graph = torch.tensor(np.log(regweight_init), requires_grad=True, device=device)
 
     optimizer_factory_outer = {
         'adagrad': lambda: optim.Adagrad([reg_weight_graph], lr=learning_rate_outer),
@@ -432,8 +434,7 @@ def main(args):
             wandb.log(outer_log, step=outer_step)
 
         if not is_quiet:
-            logger.info(f"outer dev loss: {loss_outer_dev.item()}")
-            logger.info(f"reg param: {reg_weight_graph.item():.5f} [{np.exp(reg_weight_graph.item()):.7f}]")
+            logger.info(f"outer dev loss: {loss_outer_dev.item():.7f}, reg param: {np.exp(reg_weight_graph.item()):.7f} [{reg_weight_graph.item():.5f}]")
 
         # store a copy of best embeddings
         if loss_outer_dev < best_loss_outer_dev:
@@ -546,8 +547,8 @@ def main(args):
     logger.info("Training finished")
     if use_wandb:
         # wandb.save(f"{save_path[:-4]}.log")
-        # wandb.save("kbc_meta/logs/array.err")
-        # wandb.save("kbc_meta/logs/array.out")
+        wandb.save("kbc_meta/logs/array.err")
+        wandb.save("kbc_meta/logs/array.out")
         wandb.finish()
 
 
