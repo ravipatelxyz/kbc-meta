@@ -35,7 +35,7 @@ import time
 
 logger = logging.getLogger(os.path.basename(sys.argv[0]))
 torch.set_num_threads(multiprocessing.cpu_count())
-
+plt.rcParams['figure.dpi'] = 200
 
 def metrics_to_str(metrics):
     def m(i: int) -> str:
@@ -271,7 +271,7 @@ def main(args):
     e_graph = deepcopy(entity_embeddings.weight)
     e_graph.to(device)
     p_graph = deepcopy(predicate_embeddings.weight)
-    e_graph.to(device)
+    p_graph.to(device)
 
     optimizer_factory = {
         'adagrad': lambda: optim.Adagrad([e_graph, p_graph], lr=learning_rate),
@@ -346,6 +346,7 @@ def main(args):
                                                model=model,
                                                loss_function=loss_function,
                                                masks=masks_dev)
+
             losses_inner_dev += [loss_inner_dev.item()]
             e_vals += [torch.norm(e_graph.detach().clone())]
             p_vals += [torch.norm(p_graph.detach().clone())]

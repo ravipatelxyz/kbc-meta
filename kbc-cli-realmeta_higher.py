@@ -355,6 +355,7 @@ def main(args):
 
             epoch_loss_train_nonreg_mean = np.mean(batch_losses_train_nonreg)
             losses_inner_train += [epoch_loss_train_nonreg_mean]
+            print(epoch_loss_train_nonreg_mean)
 
             if outer_step == 0 or outer_step == outer_steps - 1 or stopping_tol_inner is not None or validate_all:
 
@@ -384,6 +385,7 @@ def main(args):
                     break
 
         if outer_step == 0 or outer_step == outer_steps-1:
+            plt.figure()
             plt.plot(losses_inner_train, 'k-')
             plt.plot(losses_inner_dev, 'k--')
             plt.legend(["training loss", "masked validation loss"])
@@ -420,16 +422,16 @@ def main(args):
 
         # for plotting only
         losses_outer_dev += [loss_outer_dev.detach().clone().item()]
-        e_vals += [torch.norm(e_graph.detach().clone())]
-        p_vals += [torch.norm(p_graph.detach().clone())]
-        reg_weight_vals += [reg_weight_graph.detach().clone()]
+        e_vals += [torch.norm(e_graph.detach().clone()).item()]
+        p_vals += [torch.norm(p_graph.detach().clone()).item()]
+        reg_weight_vals += [reg_weight_graph.detach().clone().item()]
         if use_wandb:
             outer_log = {"train_loss_outer": losses_outer_train[-1],
                          "dev_loss_outer": losses_outer_dev[-1],
                          "completed_inner_steps": completed_epochs,
                          "L2_norm_entity_embeddings": e_vals[-1],
                          "L2_norm_predicate_embeddings": p_vals[-1],
-                         "regularisation_weight": reg_weight_vals[-1]
+                         "regularisation_weight": np.exp(reg_weight_vals[-1])
                          }
             wandb.log(outer_log, step=outer_step)
 
@@ -439,7 +441,7 @@ def main(args):
         # store a copy of best embeddings
         if loss_outer_dev < best_loss_outer_dev:
             best_loss_outer_dev = loss_outer_dev
-            best_reg_weight = reg_weight_graph.detach().clone()
+            best_reg_weight = reg_weight_graph.detach().clone().item()
             best_e_graph = e_graph.detach().clone()
             best_p_graph = p_graph.detach().clone()
             best_outer_step = outer_step
@@ -454,7 +456,7 @@ def main(args):
 
     metrics_log = {}
     # Final outer step metrics
-    logger.info(f"Final \touter step: {outer_steps} \treg param: {reg_weight_vals[-1]} \touter dev loss {losses_outer_dev[-1]}")
+    logger.info(f"Final \touter step: {outer_steps} \treg param: {np.exp(reg_weight_vals[-1])} [{reg_weight_vals[-1]}] \touter dev loss {losses_outer_dev[-1]}")
     for triples, name in [(t, n) for t, n in triples_name_pairs if len(t) > 0]:
         metrics_final = evaluate(entity_embeddings=e_graph.detach().clone(), predicate_embeddings=p_graph.detach().clone(),
                            test_triples=triples, all_triples=data.all_triples,
@@ -467,7 +469,7 @@ def main(args):
         logger.info(f'Final \t{name} results\t{metrics_to_str(metrics_final)}')
 
     # Best outer step metrics (i.e. step with lowest outer dev loss)
-    logger.info(f"Best \touter step: {best_outer_step+1} \treg param: {best_reg_weight} \touter dev loss {best_loss_outer_dev}")
+    logger.info(f"Best \touter step: {best_outer_step+1} \treg param: {np.exp(best_reg_weight)} [{best_reg_weight}] \touter dev loss {best_loss_outer_dev}")
     for triples, name in [(t, n) for t, n in triples_name_pairs if len(t) > 0]:
         metrics_best = evaluate(entity_embeddings=best_e_graph, predicate_embeddings=best_p_graph,
                            test_triples=triples, all_triples=data.all_triples,
@@ -480,6 +482,9 @@ def main(args):
         logger.info(f'Best \t{name} results\t{metrics_to_str(metrics_best)}')
 
     if use_wandb:
+        metrics_log.update({"starting_outer_dev_loss": losses_outer_dev[0],
+                            "final_delta_outer_dev_loss": losses_outer_dev[-1] - losses_outer_dev[0],
+                            "best_delta_outer_dev_loss": best_loss_outer_dev - losses_outer_dev[0]})
         wandb.run.summary.update(metrics_log)
 
     plt.figure()
@@ -546,9 +551,8 @@ def main(args):
 
     logger.info("Training finished")
     if use_wandb:
-        # wandb.save(f"{save_path[:-4]}.log")
-        wandb.save("kbc_meta/logs/array.err")
-        wandb.save("kbc_meta/logs/array.out")
+        # wandb.save("logs/array.err")
+        # wandb.save("logs/array.out")
         wandb.finish()
 
 
