@@ -389,7 +389,7 @@ def main(args):
             plt.savefig(os.path.join(wandb.run.dir, filename))
         else:
             plt.savefig(f"./realmeta_nations/plots/{filename}")
-    plt.show()
+    # plt.show()
 
     metrics_log = {}
     # Final inner step metrics

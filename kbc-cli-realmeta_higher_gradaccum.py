@@ -35,7 +35,7 @@ import wandb
 
 logger = logging.getLogger(os.path.basename(sys.argv[0]))
 torch.set_num_threads(multiprocessing.cpu_count())
-
+plt.rcParams['figure.dpi'] = 200
 
 def metrics_to_str(metrics):
     def m(i: int) -> str:
@@ -448,7 +448,7 @@ def main(args):
     # Final outer step metrics
     print(f"Final \touter step: {outer_steps} \taccum step: {accum_steps} \treg param: {reg_weight_vals[-1]} \touter dev loss {mean_losses_outer_dev[-1]}")
     for triples, name in [(t, n) for t, n in triples_name_pairs if len(t) > 0]:
-        metrics = evaluate(entity_embeddings=e_graph, predicate_embeddings=p_graph,
+        metrics = evaluate(entity_embeddings=e_graph.detach().clone(), predicate_embeddings=p_graph.detach().clone(),
                            test_triples=triples, all_triples=data.all_triples,
                            entity_to_index=data.entity_to_idx, predicate_to_index=data.predicate_to_idx,
                            model=model, batch_size=eval_batch_size, device=device)

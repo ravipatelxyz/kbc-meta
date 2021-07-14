@@ -371,7 +371,7 @@ def main(args):
         torch.save(parameters_lst.state_dict(), save_path)
 
     if use_wandb:
-        wandb.save(f"{save_path[:-4]}.log")
+        # wandb.save(f"{save_path[:-4]}.log")
         wandb.save("kbc_meta/logs/array.err")
         wandb.save("kbc_meta/logs/array.out")
         wandb.finish()

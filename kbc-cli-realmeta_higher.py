@@ -355,7 +355,6 @@ def main(args):
 
             epoch_loss_train_nonreg_mean = np.mean(batch_losses_train_nonreg)
             losses_inner_train += [epoch_loss_train_nonreg_mean]
-            print(epoch_loss_train_nonreg_mean)
 
             if outer_step == 0 or outer_step == outer_steps - 1 or stopping_tol_inner is not None or validate_all:
 
