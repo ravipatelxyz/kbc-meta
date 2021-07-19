@@ -115,6 +115,7 @@ def parse_args(argv):
                         choices=['adagrad', 'adam', 'sgd'])
     parser.add_argument('--regularizer', '-re', type=str, choices=["F2", "N3"], default="F2")
     parser.add_argument('--regweight_init', '-rw', type=float, default=0.001)
+    parser.add_argument('--accum_steps', '-as', action='store', type=int, default=1)
 
     parser.add_argument('--corruption', '-c', action='store', type=str, default='so',
                         choices=['so', 'spo'])
@@ -122,9 +123,10 @@ def parse_args(argv):
     parser.add_argument('--validate_all', '-V', action='store', type=str, default='False', choices=['True', 'False'])
     parser.add_argument('--input_type', '-I', action='store', type=str, default='standard',
                         choices=['standard', 'reciprocal'])
-    parser.add_argument('--do_masking_dev_loss', '-md', action='store', type=str, default='False', choices=['True', 'False'])
+    parser.add_argument('--do_masking_dev_loss', '-om', action='store', type=str, default='False', choices=['True', 'False'])
     parser.add_argument('--do_masking_train_loss', '-mt', action='store', type=str, default='False',
                         choices=['True', 'False'])
+
 
     # training params (outer loop)
     parser.add_argument('--optimizer_outer', '-oo', action='store', type=str, default='adam',
@@ -167,6 +169,7 @@ def main(args):
     corruption = args.corruption
     validate_all = args.validate_all == 'True'
     input_type = args.input_type
+    accum_steps = args.accum_steps
 
     optimizer_outer_name = args.optimizer_outer
     learning_rate_outer = args.learning_rate_outer
@@ -190,7 +193,7 @@ def main(args):
     set_seed(seed)
     random_state = np.random.RandomState(seed)
 
-    if use_wandb:
+    if use_wandb == True:
         wandb.init(entity="uclnlp", project="kbc_meta", group=f"realmeta_single_nations")
         wandb.config.update(args)
     logger.info(' '.join(sys.argv))
@@ -203,10 +206,8 @@ def main(args):
         torch.set_default_tensor_type('torch.FloatTensor')
         device = xm.xla_device()
 
-    print(device)
-
     logger.info(f'Device: {device}')
-    if use_wandb:
+    if use_wandb == True:
         wandb.config.update({'device': device})
 
     data = Data(train_path=train_path, dev_path=dev_path, test_path=test_path,
@@ -294,85 +295,91 @@ def main(args):
     # Training loop
 
     best_loss_outer_dev = np.inf
+    best_mean_accum_loss_outer_dev = np.inf
 
-    losses_outer_dev = []
-    losses_outer_train = []
+    mean_losses_outer_dev = []
+    mean_losses_outer_train = []
     e_vals = []
     p_vals = []
     reg_weight_vals = []
     gradients_outer = []
 
-    for outer_step in range(outer_steps):
+    for outer_step in range(outer_steps): # the outer loop
 
-        e_graph = deepcopy(entity_embeddings.weight)
-        e_graph.to(device)
-        p_graph = deepcopy(predicate_embeddings.weight)
-        e_graph.to(device)
+        torch.manual_seed(0)
+        accum_losses_outer_dev = []
+        accum_losses_outer_train = []
+        for accum_step in range(accum_steps):  # a full inner loop
 
-        optimizer_factory = {
-            'adagrad': lambda: optim.Adagrad([e_graph, p_graph], lr=learning_rate),
-            'adam': lambda: optim.Adam([e_graph, p_graph], lr=learning_rate),
-            'sgd': lambda: optim.SGD([e_graph, p_graph], lr=learning_rate)
-        }
+            e_graph = deepcopy(entity_embeddings.weight)
+            e_graph.to(device)
+            p_graph = deepcopy(predicate_embeddings.weight)
+            e_graph.to(device)
 
-        assert optimizer_name in optimizer_factory
-        optimizer = optimizer_factory[optimizer_name]()
+            optimizer_factory = {
+                'adagrad': lambda: optim.Adagrad([e_graph, p_graph], lr=learning_rate),
+                'adam': lambda: optim.Adam([e_graph, p_graph], lr=learning_rate),
+                'sgd': lambda: optim.SGD([e_graph, p_graph], lr=learning_rate)
+            }
 
-        diffopt = higher.get_diff_optim(optimizer, [e_graph, p_graph], track_higher_grads=True)
+            assert optimizer_name in optimizer_factory
+            optimizer = optimizer_factory[optimizer_name]()
 
-        losses_inner_train = []
-        losses_inner_dev = []
-        for epoch_no in range(1, nb_epochs + 1):
-            batcher = Batcher(data.Xs, data.Xp, data.Xo, batch_size, 1, random_state)
+            diffopt = higher.get_diff_optim(optimizer, [e_graph, p_graph], track_higher_grads=True)
 
-            batch_losses_train_withreg = []  # to store loss for each batch in the epoch
-            batch_losses_train_nonreg = []
+            losses_inner_train = []
+            losses_inner_dev = []
+            for epoch_no in range(1, nb_epochs + 1):
+                batcher = Batcher(data.Xs, data.Xp, data.Xo, batch_size, 1, random_state)
 
-            for batch_no, (batch_start, batch_end) in enumerate(batcher.batches, 1):
+                batch_losses_train_withreg = []  # to store loss for each batch in the epoch
+                batch_losses_train_nonreg = []
 
-                # Size [B] numpy arrays containing indices of each subject_entity, predicate, and object_entity in the batch
-                xp_batch, xs_batch, xo_batch, xi_batch = batcher.get_batch(batch_start, batch_end)
+                for batch_no, (batch_start, batch_end) in enumerate(batcher.batches, 1):
 
-                xs_batch = torch.tensor(xs_batch, dtype=torch.long, device=device)
-                xp_batch = torch.tensor(xp_batch, dtype=torch.long, device=device)
-                xo_batch = torch.tensor(xo_batch, dtype=torch.long, device=device)
+                    # Size [B] numpy arrays containing indices of each subject_entity, predicate, and object_entity in the batch
+                    xp_batch, xs_batch, xo_batch, xi_batch = batcher.get_batch(batch_start, batch_end)
 
-                batch_loss_train, factors = get_unreg_loss(xs_batch=xs_batch,
-                                                           xp_batch=xp_batch,
-                                                           xo_batch=xo_batch,
-                                                           xi_batch=xi_batch,
-                                                           corruption=corruption,
-                                                           entity_embeddings=e_graph,
-                                                           predicate_embeddings=p_graph,
-                                                           model=model,
-                                                           loss_function=loss_function,
-                                                           masks=masks_train)
+                    xs_batch = torch.tensor(xs_batch, dtype=torch.long, device=device)
+                    xp_batch = torch.tensor(xp_batch, dtype=torch.long, device=device)
+                    xo_batch = torch.tensor(xo_batch, dtype=torch.long, device=device)
 
-                batch_loss_train_nonreg = batch_loss_train.item()
-                batch_losses_train_nonreg += [batch_loss_train_nonreg]
+                    batch_loss_train, factors = get_unreg_loss(xs_batch=xs_batch,
+                                                   xp_batch=xp_batch,
+                                                   xo_batch=xo_batch,
+                                                   xi_batch=xi_batch,
+                                                   corruption=corruption,
+                                                   entity_embeddings=e_graph,
+                                                   predicate_embeddings=p_graph,
+                                                   model=model,
+                                                   loss_function=loss_function,
+                                                   masks=masks_train)
 
-                if regularizer == "F2":
-                    batch_loss_train += torch.exp(reg_weight_graph) * F2_reg(factors)
+                    batch_loss_train_nonreg = batch_loss_train.item()
+                    batch_losses_train_nonreg += [batch_loss_train_nonreg]
 
-                if regularizer == "N3":
-                    batch_loss_train += torch.exp(reg_weight_graph) * N3_reg(factors)
+                    if regularizer == "F2":
+                        batch_loss_train += torch.exp(reg_weight_graph) * F2_reg(factors)
 
-                e_graph, p_graph = diffopt.step(batch_loss_train, params=[e_graph, p_graph])
+                    if regularizer == "N3":
+                        batch_loss_train += torch.exp(reg_weight_graph) * N3_reg(factors)
 
-                batch_loss_train_withreg = batch_loss_train.item()
-                batch_losses_train_withreg += [batch_loss_train_withreg]
+                    e_graph, p_graph = diffopt.step(batch_loss_train, params=[e_graph, p_graph])
 
-            epoch_loss_train_nonreg_mean = np.mean(batch_losses_train_nonreg)
-            losses_inner_train += [epoch_loss_train_nonreg_mean]
+                    batch_loss_train_withreg = batch_loss_train.item()
+                    batch_losses_train_withreg += [batch_loss_train_withreg]
 
-            if outer_step == 0 or outer_step == outer_steps - 1 or stopping_tol_inner is not None or validate_all:
+                epoch_loss_train_nonreg_mean = np.mean(batch_losses_train_nonreg)
+                losses_inner_train += [epoch_loss_train_nonreg_mean]
 
-                xs_dev = torch.tensor(data.dev_Xs, dtype=torch.long, device=device)
-                xp_dev = torch.tensor(data.dev_Xp, dtype=torch.long, device=device)
-                xo_dev = torch.tensor(data.dev_Xo, dtype=torch.long, device=device)
-                xi_dev = data.dev_Xi
+                if outer_step == 0 or outer_step == outer_steps-1 or stopping_tol_inner is not None or validate_all:
 
-                loss_inner_dev, _ = get_unreg_loss(xs_batch=xs_dev,
+                    xs_dev = torch.tensor(data.dev_Xs, dtype=torch.long, device=device)
+                    xp_dev = torch.tensor(data.dev_Xp, dtype=torch.long, device=device)
+                    xo_dev = torch.tensor(data.dev_Xo, dtype=torch.long, device=device)
+                    xi_dev = data.dev_Xi
+
+                    loss_inner_dev, _ = get_unreg_loss(xs_batch=xs_dev,
                                                    xp_batch=xp_dev,
                                                    xo_batch=xo_dev,
                                                    xi_batch=xi_dev,
@@ -382,16 +389,98 @@ def main(args):
                                                    model=model,
                                                    loss_function=loss_function,
                                                    masks=masks_dev)
-                losses_inner_dev += [loss_inner_dev.item()]
+                    losses_inner_dev += [loss_inner_dev.item()]
 
-                completed_epochs = nb_epochs
-                if stopping_tol_inner is not None and epoch_no > 20 and np.mean(losses_inner_dev[-10:-5]) - np.mean(
-                        losses_inner_dev[-5:]) < stopping_tol_inner:
-                    completed_epochs = epoch_no
-                    if not is_quiet:
-                        logger.info(f"Num inner steps: {epoch_no}")
-                    break
+                    if stopping_tol_inner is not None and epoch_no > 20 and np.mean(losses_inner_dev[-10:-5]) - np.mean(losses_inner_dev[-5:]) < stopping_tol_inner:
+                        if not is_quiet:
+                            logger.info(f"Num inner steps: {epoch_no}")
+                        break
 
+            accum_losses_outer_train += [losses_inner_train[-1]]
+
+            xs_dev = torch.tensor(data.dev_Xs, dtype=torch.long, device=device)
+            xp_dev = torch.tensor(data.dev_Xp, dtype=torch.long, device=device)
+            xo_dev = torch.tensor(data.dev_Xo, dtype=torch.long, device=device)
+            xi_dev = data.dev_Xi
+
+            loss_outer_dev, _ = get_unreg_loss(xs_batch=xs_dev,
+                                           xp_batch=xp_dev,
+                                           xo_batch=xo_dev,
+                                           xi_batch=xi_dev,
+                                           corruption=corruption,
+                                           entity_embeddings=e_graph,
+                                           predicate_embeddings=p_graph,
+                                           model=model,
+                                           loss_function=loss_function,
+                                           masks=masks_dev)
+
+            loss_outer_dev.backward()
+            # print(f"Accum step: {accum_step}, Grad: {reg_weight_graph.grad}")
+            accum_losses_outer_dev += [loss_outer_dev.item()]
+
+            # store a copy of best embeddings
+            if loss_outer_dev < best_loss_outer_dev:
+                best_loss_outer_dev = loss_outer_dev
+                best_reg_weight = reg_weight_graph.detach().clone().item()
+                best_e_graph = e_graph.detach().clone()
+                best_p_graph = p_graph.detach().clone()
+                best_outer_step = outer_step
+                best_accum_step = accum_step
+                best_losses_inner_train = losses_inner_train
+                best_losses_inner_dev = losses_inner_dev
+                if use_wandb:
+                    best_log = {"best_train_loss_outer": accum_losses_outer_train[-1],
+                                "best_dev_loss_outer": best_loss_outer_dev,
+                                "best_L2_norm_entity_embeddings": best_e_graph.item(),
+                                "best_L2_norm_predicate_embeddings": best_p_graph.item(),
+                                "best_regularisation_weight": np.exp(best_reg_weight.item())
+                                }
+
+        mean_accum_loss_outer_train = np.mean(accum_losses_outer_train)
+        mean_accum_loss_outer_dev = np.mean(accum_losses_outer_dev)
+
+        # for plotting only
+        mean_losses_outer_train += [mean_accum_loss_outer_train.item()]
+        mean_losses_outer_dev += [mean_accum_loss_outer_dev.item()]
+        e_vals += [torch.norm(e_graph.detach().clone()).item()]
+        p_vals += [torch.norm(p_graph.detach().clone()).item()]
+        reg_weight_vals += [reg_weight_graph.detach().clone().item()]
+        gradients_outer += [(reg_weight_graph.grad/accum_steps).item()]
+        if use_wandb:
+            outer_log = {"train_loss_outer": mean_losses_outer_train[-1],
+                         "dev_loss_outer": mean_losses_outer_dev[-1],
+                         "L2_norm_entity_embeddings": e_vals[-1],
+                         "L2_norm_predicate_embeddings": p_vals[-1],
+                         "regularisation_weight": np.exp(reg_weight_vals[-1]),
+                         "gradient_outer": gradients_outer[-1],
+                         }
+            wandb.log(outer_log, step=outer_step)
+
+        if not is_quiet:
+            logger.info(f"outer dev loss: {mean_losses_outer_dev[-1]:.7f}, reg param: {np.exp(reg_weight_graph.item()):.7f} [{reg_weight_graph.item():.5f}], reg param gradient: {gradients_outer[-1]}")
+
+        if mean_accum_loss_outer_dev < best_mean_accum_loss_outer_dev:
+            best_mean_accum_loss_outer_dev = mean_accum_loss_outer_dev.item()
+            best_mean_accum_reg_weight = reg_weight_graph.detach().clone().item()
+            best_mean_accum_outer_step = outer_step
+            if use_wandb:
+                bestmeanaccum_log = {"BestMeanAccum_train_loss_outer": mean_losses_outer_train[-1],
+                                     "BestMeanAccum_dev_loss_outer": best_mean_accum_loss_outer_dev,
+                                     "BestMeanAccum_outer_step": best_mean_accum_outer_step,
+                                     "BestMeanAccum_L2_norm_entity_embeddings": e_vals[-1],
+                                     "BestMeanAccum_L2_norm_predicate_embeddings": p_vals[-1],
+                                     "BestMeanAccum_regularisation_weight": np.exp(reg_weight_vals[-1])
+                                     }
+
+        reg_weight_graph.grad = reg_weight_graph.grad/accum_steps
+        optimizer_outer.step()
+        if torch.absolute(reg_weight_graph.grad) < regweight_rescaler_tol:
+            reg_weight_graph.requires_grad = False
+            reg_weight_graph *= regweight_rescaler
+            reg_weight_graph.requires_grad = True
+        optimizer_outer.zero_grad()
+
+        # plots training and dev loss for a full inner loop
         if outer_step == 0 or outer_step == outer_steps-1:
             plt.figure()
             plt.plot(losses_inner_train, 'k-')
@@ -399,7 +488,7 @@ def main(args):
             plt.legend(["training loss", "masked validation loss"])
             plt.xlabel("Epoch (inner step)")
             plt.ylabel("Inner loss")
-            plt.title(f"Inner losses, for inner loop number {outer_step+1}", fontsize=14, fontweight='bold')
+            plt.title(f"Inner losses\n[inner loop number {outer_step+1}, gradient accumulation step {accum_step+1}]", fontsize=12, fontweight='bold')
             plt.tight_layout()
             if save_figs:
                 filename = f"realmeta_nations_innerloss_outerstep{outer_step+1}_{timestr}.png"
@@ -409,82 +498,37 @@ def main(args):
                     plt.savefig(f"./realmeta_nations/plots/{filename}")
             plt.show()
 
-        losses_outer_train += [losses_inner_train[-1]]
+    # Best mean outer dev losses (calculated by averaging over the repeated gradient accumulation inner loops)
+    logger.info(f"Best mean accum \touter step: {best_mean_accum_outer_step} \treg param: {np.exp(best_mean_accum_reg_weight)} [{best_mean_accum_reg_weight}] \touter dev loss: {best_mean_accum_loss_outer_dev}")
 
-        xs_dev = torch.tensor(data.dev_Xs, dtype=torch.long, device=device)
-        xp_dev = torch.tensor(data.dev_Xp, dtype=torch.long, device=device)
-        xo_dev = torch.tensor(data.dev_Xo, dtype=torch.long, device=device)
-        xi_dev = data.dev_Xi
+    # Best and final metrics based on mean over the grad accum steps for the last epoch of the given outer step
+    if use_wandb:
+        metrics_log = {}
+        metrics_log.update(bestmeanaccum_log)
+        finalmeanaccum_log = {"FinalMeanAccum_train_loss_outer": mean_losses_outer_train[-1],
+                         "FinalMeanAccum_dev_loss_outer": mean_losses_outer_dev[-1],
+                         "FinalMeanAccum_outer_step": outer_steps,
+                         "FinalMeanAccum_L2_norm_entity_embeddings": e_vals[-1],
+                         "FinalMeanAccum_L2_norm_predicate_embeddings": p_vals[-1],
+                         "FinalMeanAccum_regularisation_weight": np.exp(reg_weight_vals[-1])
+                              }
+        metrics_log.update(finalmeanaccum_log)
 
-        loss_outer_dev, _ = get_unreg_loss(xs_batch=xs_dev,
-                                       xp_batch=xp_dev,
-                                       xo_batch=xo_dev,
-                                       xi_batch=xi_dev,
-                                       corruption=corruption,
-                                       entity_embeddings=e_graph,
-                                       predicate_embeddings=p_graph,
-                                       model=model,
-                                       loss_function=loss_function,
-                                       masks=masks_dev)
-
-
-        # for plotting only
-        losses_outer_dev += [loss_outer_dev.detach().clone().item()]
-        e_vals += [torch.norm(e_graph.detach().clone()).item()]
-        p_vals += [torch.norm(p_graph.detach().clone()).item()]
-        reg_weight_vals += [reg_weight_graph.detach().clone().item()]
-        gradients_outer += [reg_weight_graph.grad.item()]
-        if use_wandb:
-            outer_log = {"train_loss_outer": losses_outer_train[-1],
-                         "dev_loss_outer": losses_outer_dev[-1],
-                         "completed_inner_steps": completed_epochs,
-                         "L2_norm_entity_embeddings": e_vals[-1],
-                         "L2_norm_predicate_embeddings": p_vals[-1],
-                         "regularisation_weight": np.exp(reg_weight_vals[-1]),
-                         "gradient_outer": gradients_outer[-1]
-                         }
-            wandb.log(outer_log, step=outer_step)
-
-        if not is_quiet:
-            logger.info(f"outer dev loss: {loss_outer_dev.item():.7f}, reg param: {np.exp(reg_weight_graph.item()):.7f} [{reg_weight_graph.item():.5f}]")
-
-        # store a copy of best embeddings
-        if loss_outer_dev < best_loss_outer_dev:
-            best_loss_outer_dev = loss_outer_dev
-            best_reg_weight = reg_weight_graph.detach().clone().item()
-            best_e_graph = e_graph.detach().clone()
-            best_p_graph = p_graph.detach().clone()
-            best_outer_step = outer_step
-            best_losses_inner_train = losses_inner_train
-            best_losses_inner_dev = losses_inner_dev
-            if use_wandb:
-                best_log = outer_log
-
-        loss_outer_dev.backward()
-        print(reg_weight_graph.grad)
-        optimizer_outer.step()
-        if torch.absolute(reg_weight_graph.grad) < regweight_rescaler_tol:
-            reg_weight_graph.requires_grad = False
-            reg_weight_graph *= regweight_rescaler
-            reg_weight_graph.requires_grad = True
-        optimizer_outer.zero_grad()
-
-    metrics_log = {}
-    # Final outer step metrics
-    logger.info(f"Final \touter step: {outer_steps} \treg param: {np.exp(reg_weight_vals[-1])} [{reg_weight_vals[-1]}] \touter dev loss {losses_outer_dev[-1]}")
+    # Final outer step metrics based on final grad accum loop in the final epoch)
+    logger.info(f"Final \touter step: {outer_steps} \taccum step: {accum_steps+1} \treg param: {np.exp(reg_weight_vals[-1])} [{reg_weight_vals[-1]}] \touter dev loss {mean_losses_outer_dev[-1]}")
     for triples, name in [(t, n) for t, n in triples_name_pairs if len(t) > 0]:
         metrics_final = evaluate(entity_embeddings=e_graph.detach().clone(), predicate_embeddings=p_graph.detach().clone(),
                            test_triples=triples, all_triples=data.all_triples,
                            entity_to_index=data.entity_to_idx, predicate_to_index=data.predicate_to_idx,
                            model=model, batch_size=eval_batch_size, device=device)
         if use_wandb:
-            metrics_final_new = {f'final_{name}_{k}': v for k, v in metrics_final.items()}  # hack to get different keys for logging
+            metrics_final_new = {f'final_{name}_{k}': v for k, v in metrics_final.items()}
             metrics_final_new.update({f'final_{k}': v for k, v in outer_log.items()})
             metrics_log.update(metrics_final_new)
         logger.info(f'Final \t{name} results\t{metrics_to_str(metrics_final)}')
 
-    # Best outer step metrics (i.e. step with lowest outer dev loss)
-    logger.info(f"Best \touter step: {best_outer_step+1} \treg param: {np.exp(best_reg_weight)} [{best_reg_weight}] \touter dev loss {best_loss_outer_dev}")
+    # Best outer step metrics based on grad accum loop with the best dev loss
+    logger.info(f"Best \touter step: {best_outer_step+1} \taccum step: {best_accum_step+1} \treg param: {np.exp(best_reg_weight)} [{best_reg_weight}]  \touter dev loss {best_loss_outer_dev}")
     for triples, name in [(t, n) for t, n in triples_name_pairs if len(t) > 0]:
         metrics_best = evaluate(entity_embeddings=best_e_graph, predicate_embeddings=best_p_graph,
                            test_triples=triples, all_triples=data.all_triples,
@@ -496,11 +540,8 @@ def main(args):
             metrics_log.update(metrics_best_new)
         logger.info(f'Best \t{name} results\t{metrics_to_str(metrics_best)}')
 
-    if use_wandb:
-        metrics_log.update({"starting_outer_dev_loss": losses_outer_dev[0],
-                            "final_delta_outer_dev_loss": losses_outer_dev[-1] - losses_outer_dev[0],
-                            "best_delta_outer_dev_loss": best_loss_outer_dev - losses_outer_dev[0]})
-        wandb.run.summary.update(metrics_log)
+    if use_wandb == True:
+        wandb.log(eval_log, step=nb_epochs, commit=True)
 
     plt.figure()
     plt.plot(best_losses_inner_train, 'k-')
@@ -508,7 +549,7 @@ def main(args):
     plt.legend(["training loss", "masked validation loss"])
     plt.xlabel("Epoch (inner step)")
     plt.ylabel("Inner loss")
-    plt.title(f"Inner losses, for inner loop number {best_outer_step + 1}", fontsize=14, fontweight='bold')
+    plt.title(f"Inner losses\n[inner loop number {best_outer_step + 1}, gradient accumulation step {best_accum_step+1}]", fontsize=12, fontweight='bold')
     plt.tight_layout()
     if save_figs:
         filename = f"realmeta_nations_innertrainloss_outerstep{best_outer_step + 1}_{timestr}.png"
@@ -519,12 +560,12 @@ def main(args):
     plt.show()
 
     plt.figure()
-    plt.plot(losses_outer_train, 'k-')
-    plt.plot(losses_outer_dev, 'k--')
-    plt.legend(["training loss", "masked validation loss"])
+    plt.plot(mean_losses_outer_train, 'k-')
+    plt.plot(mean_losses_outer_dev, 'k--')
+    plt.legend(["mean training loss", "mean masked validation loss"])
     plt.xlabel("Outer step")
-    plt.ylabel("Outer loss")
-    plt.title(f"Outer losses", fontsize=14, fontweight='bold')
+    plt.ylabel("Mean outer loss")
+    plt.title(f"Mean outer losses", fontsize=14, fontweight='bold')
     plt.tight_layout()
     if save_figs:
         filename = f"realmeta_nations_outer_losses_{timestr}.png"
@@ -565,11 +606,10 @@ def main(args):
     plt.show()
 
     logger.info("Training finished")
-    if use_wandb:
-        # wandb.save("logs/array.err")
-        # wandb.save("logs/array.out")
+    if use_wandb == True:
+        # wandb.save("kbc_meta/logs/array.err")
+        # wandb.save("kbc_meta/logs/array.out")
         wandb.finish()
-
 
 if __name__ == '__main__':
     logging.basicConfig(stream=sys.stdout, level=logging.INFO)
