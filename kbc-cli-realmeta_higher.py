@@ -133,8 +133,8 @@ def parse_args(argv):
     parser.add_argument('--outer_steps', '-os', action='store', type=int, default=100)
     parser.add_argument('--stopping_tol_outer', '-to', action='store', type=float, default=None)
     parser.add_argument('--grad_clip_val_outer', '-gc', action='store', type=float, default=None)
-    parser.add_argument('--regweight_rescaler', 'rr', action='store', type=float, default=None)
-    parser.add_argument('--regweight_rescaler_tol', 'rt', action='store', type=float, default=1e-10)
+    parser.add_argument('--regweight_rescaler', '-rr', action='store', type=float, default=1)
+    parser.add_argument('--regweight_rescaler_tol', '-rt', action='store', type=float, default=1e-10)
 
     # other
     parser.add_argument('--load', action='store', type=str, default=None)
@@ -260,7 +260,8 @@ def main(args):
 
     optimizer_outer = optimizer_factory_outer[optimizer_outer_name]()
 
-    reg_weight_graph.register_hook(lambda grad: torch.clamp(grad, -grad_clip_val_outer, grad_clip_val_outer))
+    if grad_clip_val_outer is not None:
+        reg_weight_graph.register_hook(lambda grad: torch.clamp(grad, -grad_clip_val_outer, grad_clip_val_outer))
 
     # Specify loss function (cross-entropy by default), used for both inner and outer loops
     loss_function = nn.CrossEntropyLoss(reduction='mean')
@@ -427,6 +428,7 @@ def main(args):
                                        loss_function=loss_function,
                                        masks=masks_dev)
 
+        loss_outer_dev.backward()
 
         # for plotting only
         losses_outer_dev += [loss_outer_dev.detach().clone().item()]
@@ -446,7 +448,7 @@ def main(args):
             wandb.log(outer_log, step=outer_step)
 
         if not is_quiet:
-            logger.info(f"outer dev loss: {loss_outer_dev.item():.7f}, reg param: {np.exp(reg_weight_graph.item()):.7f} [{reg_weight_graph.item():.5f}]")
+            logger.info(f"outer dev loss: {loss_outer_dev.item():.7f}, reg param: {np.exp(reg_weight_graph.item()):.7f} [{reg_weight_graph.item():.5f}], reg param gradient: {gradients_outer[-1]}")
 
         # store a copy of best embeddings
         if loss_outer_dev < best_loss_outer_dev:
@@ -460,8 +462,6 @@ def main(args):
             if use_wandb:
                 best_log = outer_log
 
-        loss_outer_dev.backward()
-        print(reg_weight_graph.grad)
         optimizer_outer.step()
         if torch.absolute(reg_weight_graph.grad) < regweight_rescaler_tol:
             reg_weight_graph.requires_grad = False
@@ -542,6 +542,20 @@ def main(args):
     plt.tight_layout()
     if save_figs:
         filename = f"realmeta_nations_reg_weights_{timestr}.png"
+        if use_wandb:
+            plt.savefig(os.path.join(wandb.run.dir, filename))
+        else:
+            plt.savefig(f"./realmeta_nations/plots/{filename}")
+    plt.show()
+
+    plt.figure()
+    plt.plot(gradients_outer, 'k-')
+    plt.xlabel("Outer step")
+    plt.ylabel("Regularisation weight gradient")
+    plt.title(f"{regularizer} regularisation weight gradients", fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    if save_figs:
+        filename = f"realmeta_nations_reg_weight_gradients_{timestr}.png"
         if use_wandb:
             plt.savefig(os.path.join(wandb.run.dir, filename))
         else:

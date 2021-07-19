@@ -135,8 +135,8 @@ def parse_args(argv):
     parser.add_argument('--outer_steps', '-os', action='store', type=int, default=100)
     parser.add_argument('--stopping_tol_outer', '-to', action='store', type=float, default=None)
     parser.add_argument('--grad_clip_val_outer', '-gc', action='store', type=float, default=None)
-    parser.add_argument('--regweight_rescaler', 'rr', action='store', type=float, default=None)
-    parser.add_argument('--regweight_rescaler_tol', 'rt', action='store', type=float, default=1e-10)
+    parser.add_argument('--regweight_rescaler', '-rr', action='store', type=float, default=None)
+    parser.add_argument('--regweight_rescaler_tol', '-rt', action='store', type=float, default=1e-10)
 
     # other
     parser.add_argument('--load', action='store', type=str, default=None)
@@ -261,7 +261,8 @@ def main(args):
 
     optimizer_outer = optimizer_factory_outer[optimizer_outer_name]()
 
-    reg_weight_graph.register_hook(lambda grad: torch.clamp(grad, -grad_clip_val_outer, grad_clip_val_outer))
+    if grad_clip_val_outer is not None:
+        reg_weight_graph.register_hook(lambda grad: torch.clamp(grad, -grad_clip_val_outer, grad_clip_val_outer))
 
     # Specify loss function (cross-entropy by default), used for both inner and outer loops
     loss_function = nn.CrossEntropyLoss(reduction='mean')
@@ -583,6 +584,20 @@ def main(args):
     plt.tight_layout()
     if save_figs:
         filename = f"realmeta_nations_reg_weights_{timestr}.png"
+        if use_wandb:
+            plt.savefig(os.path.join(wandb.run.dir, filename))
+        else:
+            plt.savefig(f"./realmeta_nations/plots/{filename}")
+    plt.show()
+
+    plt.figure()
+    plt.plot(gradients_outer, 'k-')
+    plt.xlabel("Outer step")
+    plt.ylabel("Regularisation weight gradient")
+    plt.title(f"{regularizer} regularisation weight gradients", fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    if save_figs:
+        filename = f"realmeta_nations_reg_weight_gradients_{timestr}.png"
         if use_wandb:
             plt.savefig(os.path.join(wandb.run.dir, filename))
         else:
