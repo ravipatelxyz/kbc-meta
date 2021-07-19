@@ -264,8 +264,8 @@ def main():
 if __name__ == '__main__':
 
     # Specify experimental parameters
-    TRAIN_DIR = "./data/toy/train.tsv"
-    DEV_DIR = "./data/toy/dev.tsv"
+    TRAIN_DIR = "../data/toy/train.tsv"
+    DEV_DIR = "../data/toy/dev.tsv"
     TEST_DIR = None  # "./data/toy/dev.tsv"
     MODEL = "distmult"
     EMBEDDING_SIZE = 1

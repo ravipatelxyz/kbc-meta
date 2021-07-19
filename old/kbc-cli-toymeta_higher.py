@@ -241,8 +241,8 @@ def main():
 if __name__ == '__main__':
 
     # Specify experimental parameters
-    TRAIN_DIR = "./data/toy/train_single.tsv"  # train_single.tsv contains <A,r,B>, train.tsv contains <A,r,B> and <B,r,D>
-    DEV_DIR = "./data/toy/dev.tsv"  # dev.tsv contains <A,r,C>
+    TRAIN_DIR = "../data/toy/train_single.tsv"  # train_single.tsv contains <A,r,B>, train.tsv contains <A,r,B> and <B,r,D>
+    DEV_DIR = "../data/toy/dev.tsv"  # dev.tsv contains <A,r,C>
     TEST_DIR = None  # "./data/toy/dev.tsv"
     MODEL = "distmult"
     EMBEDDING_SIZE = 1
