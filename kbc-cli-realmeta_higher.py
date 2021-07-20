@@ -86,6 +86,7 @@ def get_unreg_loss(xs_batch: Tensor,
             so_scores = so_scores + masks[2][xi_batch, :]
         loss += loss_function(so_scores, xp_batch)
 
+    # list of length 3, each element containing tensor of shape batch_size x rank
     factors = [model.factor(e) for e in [xp_batch_emb, xs_batch_emb, xo_batch_emb]]
 
     return loss, factors
