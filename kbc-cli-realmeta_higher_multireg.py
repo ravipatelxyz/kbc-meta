@@ -25,7 +25,7 @@ from kbc.training.masking import compute_masks
 
 from kbc.models import DistMult, ComplEx, TransE
 
-from kbc.regularizers import F2, N3
+from kbc.regularizers.base import weighted_f2, weighted_n3
 from kbc.evaluation import evaluate
 
 import logging
@@ -212,6 +212,8 @@ def main(args):
     data = Data(train_path=train_path, dev_path=dev_path, test_path=test_path,
                 test_i_path=None, test_ii_path=None, input_type=input_type)
 
+    print(data.entity_to_idx)
+    print(data.predicate_to_idx)
     # the .dev_triples attributes here contain ID strings
     triples_name_pairs = [
         (data.train_triples, 'train'),
@@ -242,26 +244,39 @@ def main(args):
     entity_embeddings.weight.data *= init_size
     predicate_embeddings.weight.data *= init_size
 
-    # Specify norm to use as regularizer
-    if regularizer == "F2":
-        F2_reg = F2()
-    elif regularizer == "N3":
-        N3_reg = N3()
-
-    # regularizer_weights = nn.Embedding(1, 1).to(device)
-    # reg_weight_graph = deepcopy(regularizer_weights.weight)
-    reg_weight_graph = torch.tensor(np.log(regweight_init), requires_grad=True, device=device)
+    init_size_lmbda = 0.015
+    if model_name == "distmult":
+        # lmbda_ent = nn.Embedding(data.nb_entities, 1).to(device)
+        # lmbda_pred = nn.Embedding(data.nb_predicates, 1).to(device)
+        # lmbda_ent.weight.data *= init_size_lmbda
+        # lmbda_pred.weight.data *= init_size_lmbda
+        # lmbda_ent_graph = deepcopy(torch.log(lmbda_ent.weight))
+        # lmbda_pred_graph = deepcopy(torch.log(lmbda_pred.weight))
+        lmbda_ent_graph = torch.tensor(np.log(init_size_lmbda*np.ones((data.nb_entities, 1))), requires_grad=True, device=device)
+        lmbda_pred_graph = torch.tensor(np.log(init_size_lmbda*np.ones((data.nb_predicates, 1))), requires_grad=True, device=device)
+        lmbda_list = [lmbda_ent_graph, lmbda_pred_graph]
+    elif model_name == "complex":
+        lmbda_lhs = nn.Embedding(data.nb_entities, 1).to(device)
+        lmbda_pred = nn.Embedding(data.nb_predicates, 1).to(device)
+        lmbda_rhs = nn.Embedding(data.nb_entities, 1).to(device)
+        lmbda_lhs.weight.data *= init_size_lmbda
+        lmbda_pred.weight.data *= init_size_lmbda
+        lmbda_rhs.weight.data *= init_size_lmbda
+        lmbda_lhs_graph = deepcopy(lmbda_lhs.weight)
+        lmbda_pred_graph = deepcopy(lmbda_pred.weight)
+        lmbda_rhs_graph = deepcopy(lmbda_rhs.weight)
+        lmbda_list = [lmbda_lhs_graph, lmbda_pred_graph, lmbda_rhs_graph]
 
     optimizer_factory_outer = {
-        'adagrad': lambda: optim.Adagrad([reg_weight_graph], lr=learning_rate_outer),
-        'adam': lambda: optim.Adam([reg_weight_graph], lr=learning_rate_outer),
-        'sgd': lambda: optim.SGD([reg_weight_graph], lr=learning_rate_outer)
+        'adagrad': lambda: optim.Adagrad([lmbda_ent_graph, lmbda_pred_graph], lr=learning_rate_outer),
+        'adam': lambda: optim.Adam([lmbda_ent_graph, lmbda_pred_graph], lr=learning_rate_outer),
+        'sgd': lambda: optim.SGD([lmbda_ent_graph, lmbda_pred_graph], lr=learning_rate_outer)
     }
 
     optimizer_outer = optimizer_factory_outer[optimizer_outer_name]()
 
-    if grad_clip_val_outer is not None:
-        reg_weight_graph.register_hook(lambda grad: torch.clamp(grad, -grad_clip_val_outer, grad_clip_val_outer))
+    # if grad_clip_val_outer is not None: # todo
+    #     reg_weight_graph.register_hook(lambda grad: torch.clamp(grad, -grad_clip_val_outer, grad_clip_val_outer))
 
     # Specify loss function (cross-entropy by default), used for both inner and outer loops
     loss_function = nn.CrossEntropyLoss(reduction='mean')
@@ -353,10 +368,14 @@ def main(args):
                 batch_losses_train_nonreg += [batch_loss_train_nonreg]
 
                 if regularizer == "F2":
-                    batch_loss_train += torch.exp(reg_weight_graph) * F2_reg(factors)
+                    l_reg, l_reg_raw, lmbda_avg = weighted_f2(torch.exp(lmbda_ent_graph)[xs_batch], torch.exp(lmbda_pred_graph)[xp_batch],
+                                                              torch.exp(lmbda_ent_graph)[xo_batch], factors)
+                    batch_loss_train += l_reg
 
                 if regularizer == "N3":
-                    batch_loss_train += torch.exp(reg_weight_graph) * N3_reg(factors)
+                    l_reg, l_reg_raw, lmbda_avg = weighted_n3(torch.exp(lmbda_ent_graph)[xs_batch], torch.exp(lmbda_pred_graph)[xp_batch],
+                                                              torch.exp(lmbda_ent_graph)[xo_batch], factors)
+                    batch_loss_train += l_reg
 
                 e_graph, p_graph = diffopt.step(batch_loss_train, params=[e_graph, p_graph])
 
@@ -434,44 +453,48 @@ def main(args):
         losses_outer_dev += [loss_outer_dev.detach().clone().item()]
         e_vals += [torch.norm(e_graph.detach().clone()).item()]
         p_vals += [torch.norm(p_graph.detach().clone()).item()]
-        reg_weight_vals += [reg_weight_graph.detach().clone().item()]
-        gradients_outer += [reg_weight_graph.grad.item()]
-        if use_wandb:
-            outer_log = {"train_loss_outer": losses_outer_train[-1],
-                         "dev_loss_outer": losses_outer_dev[-1],
-                         "completed_inner_steps": completed_epochs,
-                         "L2_norm_entity_embeddings": e_vals[-1],
-                         "L2_norm_predicate_embeddings": p_vals[-1],
-                         "regularisation_weight": np.exp(reg_weight_vals[-1]),
-                         "gradient_outer": gradients_outer[-1]
-                         }
-            wandb.log(outer_log, step=outer_step)
-
-        if not is_quiet:
-            logger.info(f"outer dev loss: {loss_outer_dev.item():.7f}, reg param: {np.exp(reg_weight_graph.item()):.7f} [{reg_weight_graph.item():.5f}], reg param gradient: {gradients_outer[-1]}")
-
-        # store a copy of best embeddings
-        if loss_outer_dev < best_loss_outer_dev:
-            best_loss_outer_dev = loss_outer_dev
-            best_reg_weight = reg_weight_graph.detach().clone().item()
-            best_e_graph = e_graph.detach().clone()
-            best_p_graph = p_graph.detach().clone()
-            best_outer_step = outer_step
-            best_losses_inner_train = losses_inner_train
-            best_losses_inner_dev = losses_inner_dev
-            if use_wandb:
-                best_log = outer_log
+        # reg_weight_vals += [reg_weight_graph.detach().clone().item()]
+        # gradients_outer += [reg_weight_graph.grad.item()]
+        # if use_wandb:
+        #     outer_log = {"train_loss_outer": losses_outer_train[-1],
+        #                  "dev_loss_outer": losses_outer_dev[-1],
+        #                  "completed_inner_steps": completed_epochs,
+        #                  "L2_norm_entity_embeddings": e_vals[-1],
+        #                  "L2_norm_predicate_embeddings": p_vals[-1],
+        #                  "regularisation_weight": np.exp(reg_weight_vals[-1]),
+        #                  "gradient_outer": gradients_outer[-1]
+        #                  }
+        #     wandb.log(outer_log, step=outer_step)
+        #
+        # if not is_quiet:
+        #     logger.info(f"outer dev loss: {loss_outer_dev.item():.7f}, reg param: {np.exp(reg_weight_graph.item()):.7f} [{reg_weight_graph.item():.5f}], reg param gradient: {gradients_outer[-1]}")
+        #
+        # # store a copy of best embeddings
+        # if loss_outer_dev < best_loss_outer_dev:
+        #     best_loss_outer_dev = loss_outer_dev
+        #     best_reg_weight = reg_weight_graph.detach().clone().item()
+        #     best_e_graph = e_graph.detach().clone()
+        #     best_p_graph = p_graph.detach().clone()
+        #     best_outer_step = outer_step
+        #     best_losses_inner_train = losses_inner_train
+        #     best_losses_inner_dev = losses_inner_dev
+        #     if use_wandb:
+        #         best_log = outer_log
 
         optimizer_outer.step()
-        if torch.absolute(reg_weight_graph.grad) < regweight_rescaler_tol:
-            reg_weight_graph.requires_grad = False
-            reg_weight_graph *= regweight_rescaler
-            reg_weight_graph.requires_grad = True
+        if outer_step == outer_steps-1:
+            # print(torch.exp(lmbda_ent_graph))
+            print(torch.exp(lmbda_pred_graph))
+        # print(lmbda_ent_graph.grad)
+        # if torch.absolute(reg_weight_graph.grad) < regweight_rescaler_tol:
+        #     reg_weight_graph.requires_grad = False
+        #     reg_weight_graph *= regweight_rescaler
+        #     reg_weight_graph.requires_grad = True
         optimizer_outer.zero_grad()
 
     metrics_log = {}
     # Final outer step metrics
-    logger.info(f"Final \touter step: {outer_steps} \treg param: {np.exp(reg_weight_vals[-1])} [{reg_weight_vals[-1]}] \touter dev loss {losses_outer_dev[-1]}")
+    # logger.info(f"Final \touter step: {outer_steps} \treg param: {np.exp(reg_weight_vals[-1])} [{reg_weight_vals[-1]}] \touter dev loss {losses_outer_dev[-1]}")
     for triples, name in [(t, n) for t, n in triples_name_pairs if len(t) > 0]:
         metrics_final = evaluate(entity_embeddings=e_graph.detach().clone(), predicate_embeddings=p_graph.detach().clone(),
                            test_triples=triples, all_triples=data.all_triples,
@@ -484,17 +507,17 @@ def main(args):
         logger.info(f'Final \t{name} results\t{metrics_to_str(metrics_final)}')
 
     # Best outer step metrics (i.e. step with lowest outer dev loss)
-    logger.info(f"Best \touter step: {best_outer_step+1} \treg param: {np.exp(best_reg_weight)} [{best_reg_weight}] \touter dev loss {best_loss_outer_dev}")
-    for triples, name in [(t, n) for t, n in triples_name_pairs if len(t) > 0]:
-        metrics_best = evaluate(entity_embeddings=best_e_graph, predicate_embeddings=best_p_graph,
-                           test_triples=triples, all_triples=data.all_triples,
-                           entity_to_index=data.entity_to_idx, predicate_to_index=data.predicate_to_idx,
-                           model=model, batch_size=eval_batch_size, device=device)
-        if use_wandb:
-            metrics_best_new = {f'best_{name}_{k}': v for k, v in metrics_best.items()}  # hack to get different keys for logging
-            metrics_best_new.update({f'best_{k}': v for k, v in best_log.items()})
-            metrics_log.update(metrics_best_new)
-        logger.info(f'Best \t{name} results\t{metrics_to_str(metrics_best)}')
+    # logger.info(f"Best \touter step: {best_outer_step+1} \treg param: {np.exp(best_reg_weight)} [{best_reg_weight}] \touter dev loss {best_loss_outer_dev}")
+    # for triples, name in [(t, n) for t, n in triples_name_pairs if len(t) > 0]:
+    #     metrics_best = evaluate(entity_embeddings=best_e_graph, predicate_embeddings=best_p_graph,
+    #                        test_triples=triples, all_triples=data.all_triples,
+    #                        entity_to_index=data.entity_to_idx, predicate_to_index=data.predicate_to_idx,
+    #                        model=model, batch_size=eval_batch_size, device=device)
+    #     if use_wandb:
+    #         metrics_best_new = {f'best_{name}_{k}': v for k, v in metrics_best.items()}  # hack to get different keys for logging
+    #         metrics_best_new.update({f'best_{k}': v for k, v in best_log.items()})
+    #         metrics_log.update(metrics_best_new)
+    #     logger.info(f'Best \t{name} results\t{metrics_to_str(metrics_best)}')
 
     if use_wandb:
         metrics_log.update({"starting_outer_dev_loss": losses_outer_dev[0],
@@ -502,21 +525,21 @@ def main(args):
                             "best_delta_outer_dev_loss": best_loss_outer_dev - losses_outer_dev[0]})
         wandb.run.summary.update(metrics_log)
 
-    plt.figure()
-    plt.plot(best_losses_inner_train, 'k-')
-    plt.plot(best_losses_inner_dev, 'k--')
-    plt.legend(["training loss", "masked validation loss"])
-    plt.xlabel("Epoch (inner step)")
-    plt.ylabel("Inner loss")
-    plt.title(f"Inner losses, for inner loop number {best_outer_step + 1}", fontsize=14, fontweight='bold')
-    plt.tight_layout()
-    if save_figs:
-        filename = f"realmeta_nations_innertrainloss_outerstep{best_outer_step + 1}_{timestr}.png"
-        if use_wandb:
-            plt.savefig(os.path.join(wandb.run.dir, filename))
-        else:
-            plt.savefig(f"./realmeta_nations/plots/{filename}")
-    plt.show()
+    # plt.figure()
+    # plt.plot(best_losses_inner_train, 'k-')
+    # plt.plot(best_losses_inner_dev, 'k--')
+    # plt.legend(["training loss", "masked validation loss"])
+    # plt.xlabel("Epoch (inner step)")
+    # plt.ylabel("Inner loss")
+    # plt.title(f"Inner losses, for inner loop number {best_outer_step + 1}", fontsize=14, fontweight='bold')
+    # plt.tight_layout()
+    # if save_figs:
+    #     filename = f"realmeta_nations_innertrainloss_outerstep{best_outer_step + 1}_{timestr}.png"
+    #     if use_wandb:
+    #         plt.savefig(os.path.join(wandb.run.dir, filename))
+    #     else:
+    #         plt.savefig(f"./realmeta_nations/plots/{filename}")
+    # plt.show()
 
     plt.figure()
     plt.plot(losses_outer_train, 'k-')
@@ -534,33 +557,33 @@ def main(args):
             plt.savefig(f"./realmeta_nations/plots/{filename}")
     plt.show()
 
-    plt.figure()
-    plt.plot(np.exp(reg_weight_vals), 'k-')
-    plt.xlabel("Outer step")
-    plt.ylabel("Regularisation weight value")
-    plt.title(f"{regularizer} regularisation weight values", fontsize=14, fontweight='bold')
-    plt.tight_layout()
-    if save_figs:
-        filename = f"realmeta_nations_reg_weights_{timestr}.png"
-        if use_wandb:
-            plt.savefig(os.path.join(wandb.run.dir, filename))
-        else:
-            plt.savefig(f"./realmeta_nations/plots/{filename}")
-    plt.show()
+    # plt.figure()
+    # plt.plot(np.exp(reg_weight_vals), 'k-')
+    # plt.xlabel("Outer step")
+    # plt.ylabel("Regularisation weight value")
+    # plt.title(f"{regularizer} regularisation weight values", fontsize=14, fontweight='bold')
+    # plt.tight_layout()
+    # if save_figs:
+    #     filename = f"realmeta_nations_reg_weights_{timestr}.png"
+    #     if use_wandb:
+    #         plt.savefig(os.path.join(wandb.run.dir, filename))
+    #     else:
+    #         plt.savefig(f"./realmeta_nations/plots/{filename}")
+    # plt.show()
 
-    plt.figure()
-    plt.plot(gradients_outer, 'k-')
-    plt.xlabel("Outer step")
-    plt.ylabel("Regularisation weight gradient")
-    plt.title(f"{regularizer} regularisation weight gradients", fontsize=14, fontweight='bold')
-    plt.tight_layout()
-    if save_figs:
-        filename = f"realmeta_nations_reg_weight_gradients_{timestr}.png"
-        if use_wandb:
-            plt.savefig(os.path.join(wandb.run.dir, filename))
-        else:
-            plt.savefig(f"./realmeta_nations/plots/{filename}")
-    plt.show()
+    # plt.figure()
+    # plt.plot(gradients_outer, 'k-')
+    # plt.xlabel("Outer step")
+    # plt.ylabel("Regularisation weight gradient")
+    # plt.title(f"{regularizer} regularisation weight gradients", fontsize=14, fontweight='bold')
+    # plt.tight_layout()
+    # if save_figs:
+    #     filename = f"realmeta_nations_reg_weight_gradients_{timestr}.png"
+    #     if use_wandb:
+    #         plt.savefig(os.path.join(wandb.run.dir, filename))
+    #     else:
+    #         plt.savefig(f"./realmeta_nations/plots/{filename}")
+    # plt.show()
 
     plt.figure()
     plt.plot(e_vals, 'k-')
