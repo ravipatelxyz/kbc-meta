@@ -13,6 +13,7 @@ import multiprocessing
 import higher
 import numpy as np
 import matplotlib.pyplot as plt
+import pandas as pd
 
 import torch
 from torch import nn, optim, Tensor
@@ -89,6 +90,30 @@ def get_unreg_loss(xs_batch: Tensor,
     factors = [model.factor(e) for e in [xp_batch_emb, xs_batch_emb, xo_batch_emb]]
 
     return loss, factors
+
+
+def get_entity_relation_frequencies(triples):
+    """count frequencies of each entity and predicate, make df of number of each"""
+    subject_set = {s for (s, _, _) in triples}
+    object_set = {o for (_, _, o) in triples}
+    entity_set = subject_set | object_set
+    relation_set = {p for (_, p, _) in triples}
+
+    entity_counts = {}
+    for entity in entity_set:
+        entity_counts[entity] = 0
+        for triple in triples:
+            if entity == triple[0] or entity == triple[2]:
+                entity_counts[entity] += 1
+
+    relation_counts = {}
+    for relation in relation_set:
+        relation_counts[relation] = 0
+        for triple in triples:
+            if relation == triple[1]:
+                relation_counts[relation] += 1
+
+    return entity_counts, relation_counts
 
 
 def parse_args(argv):
@@ -541,6 +566,49 @@ def main(args):
                             "final_delta_outer_dev_loss": losses_outer_dev[-1] - losses_outer_dev[0],
                             "best_delta_outer_dev_loss": best_loss_outer_dev - losses_outer_dev[0]})
         wandb.run.summary.update(metrics_log)
+
+    entity_counts_train, relation_counts_train = get_entity_relation_frequencies(data.train_triples)
+    df_entity_counts = pd.DataFrame.from_dict({"entity_counts": entity_counts_train}).sort_index()
+    df_entity_counts["reg_val"] = torch.exp(best_lmbda_ent[:,-1]).tolist()
+    df_entity_counts["reg_val_times_n"] = df_entity_counts["reg_val"] * df_entity_counts["entity_counts"]
+    m, b = np.polyfit(df_entity_counts["entity_counts"], df_entity_counts["reg_val_times_n"], 1)
+    plot = df_entity_counts.plot("entity_counts", "reg_val_times_n", style="o", color="k")
+    plot.plot(np.array(df_entity_counts["entity_counts"]), m*np.array(df_entity_counts["entity_counts"]+b), 'k-')
+    plot.set_yscale('log')
+    plot.set_xscale('log')
+    plt.xlabel("Number of triples containing given entity")
+    plt.ylabel("Regularisation strength")
+    plt.title(f"Regularisation strength by entity frequency", fontsize=14, fontweight='bold')
+    plt.legend(["meta-learnt regularisation values", "proportional fit"])
+    plt.tight_layout()
+    if save_figs:
+        filename = f"realmeta_nations_regstrength_v_entityfreq_{timestr}.png"
+        if use_wandb:
+            plt.savefig(os.path.join(wandb.run.dir, filename))
+        else:
+            plt.savefig(f"./realmeta_nations/plots/{filename}")
+    plt.show()
+
+    df_relation_counts = pd.DataFrame.from_dict({"relation_counts": relation_counts_train}).sort_index()
+    df_relation_counts["reg_val"] = torch.exp(best_lmbda_pred[:,-1]).tolist()
+    df_relation_counts["reg_val_times_n"] = df_relation_counts["reg_val"] * df_relation_counts["relation_counts"]
+    m, b = np.polyfit(df_relation_counts["relation_counts"], df_relation_counts["reg_val_times_n"], 1)
+    plot = df_relation_counts.plot("relation_counts", "reg_val_times_n", style="o", color="k")
+    plot.plot(np.array(df_relation_counts["relation_counts"]), m*np.array(df_relation_counts["relation_counts"]+b), 'k-')
+    plot.set_yscale('log')
+    plot.set_xscale('log')
+    plt.xlabel("Number of triples containing given relation")
+    plt.ylabel("Regularisation strength")
+    plt.title(f"Regularisation strength by relation frequency", fontsize=14, fontweight='bold')
+    plt.legend(["meta-learnt regularisation values", "proportional fit"])
+    plt.tight_layout()
+    if save_figs:
+        filename = f"realmeta_nations_regstrength_v_relationfreq_{timestr}.png"
+        if use_wandb:
+            plt.savefig(os.path.join(wandb.run.dir, filename))
+        else:
+            plt.savefig(f"./realmeta_nations/plots/{filename}")
+    plt.show()
 
     plt.figure()
     plt.plot(best_losses_inner_train, 'k-')
