@@ -305,8 +305,9 @@ def main(args):
 
     optimizer_outer = optimizer_factory_outer[optimizer_outer_name]()
 
-    # if grad_clip_val_outer is not None: # todo implement grad clipping
-    #     reg_weight_graph.register_hook(lambda grad: torch.clamp(grad, -grad_clip_val_outer, grad_clip_val_outer))
+    if grad_clip_val_outer is not None:
+        lmbda_ent_graph.register_hook(lambda grad: torch.clamp(grad, -grad_clip_val_outer, grad_clip_val_outer))
+        lmbda_pred_graph.register_hook(lambda grad: torch.clamp(grad, -grad_clip_val_outer, grad_clip_val_outer))
 
     # Specify loss function (cross-entropy by default), used for both inner and outer loops
     loss_function = nn.CrossEntropyLoss(reduction='mean')
@@ -527,11 +528,13 @@ def main(args):
             print(torch.exp(lmbda_ent_graph))
             print(torch.exp(lmbda_pred_graph))
 
-        # todo implement rescaling
-        # if torch.absolute(reg_weight_graph.grad) < regweight_rescaler_tol:
-        #     reg_weight_graph.requires_grad = False
-        #     reg_weight_graph *= regweight_rescaler
-        #     reg_weight_graph.requires_grad = True
+        if np.abs(L2_gradients_outer[-1]) < regweight_rescaler_tol:
+            lmbda_ent_graph.requires_grad = False
+            lmbda_ent_graph *= regweight_rescaler
+            lmbda_ent_graph.requires_grad = True
+            lmbda_pred_graph.requires_grad = False
+            lmbda_pred_graph *= regweight_rescaler
+            lmbda_pred_graph.requires_grad = True
         optimizer_outer.zero_grad()
 
     metrics_log = {}
