@@ -571,12 +571,15 @@ def main(args):
         wandb.run.summary.update(metrics_log)
 
     entity_counts_train, relation_counts_train = get_entity_relation_frequencies(data.train_triples)
+
     df_entity_counts = pd.DataFrame.from_dict({"entity_counts": entity_counts_train}).sort_index()
     df_entity_counts["reg_val"] = torch.exp(best_lmbda_ent[:,-1]).tolist()
     df_entity_counts["reg_val_times_n"] = df_entity_counts["reg_val"] * df_entity_counts["entity_counts"]
-    m, b = np.polyfit(df_entity_counts["entity_counts"], df_entity_counts["reg_val_times_n"], 1)
-    plot = df_entity_counts.plot("entity_counts", "reg_val_times_n", style="o", color="k")
-    plot.plot(np.array(df_entity_counts["entity_counts"]), m*np.array(df_entity_counts["entity_counts"]+b), 'k-')
+    fit = np.polyfit(np.array(df_entity_counts["entity_counts"]), np.array(df_entity_counts["reg_val_times_n"]), 1)
+    plot = df_entity_counts.plot("entity_counts", "reg_val_times_n", style="o", color="k", loglog=True)
+    new_x = np.linspace(np.min(df_entity_counts["entity_counts"]), np.max(df_entity_counts["entity_counts"]))
+    new_y = np.linspace(fit[0]*np.min(df_entity_counts["entity_counts"])+fit[1], fit[0]*np.max(df_entity_counts["entity_counts"])+fit[1])
+    plot.plot(new_x, new_y, 'k-')
     plot.set_yscale('log')
     plot.set_xscale('log')
     plt.xlabel("Number of triples containing given entity")
@@ -595,9 +598,12 @@ def main(args):
     df_relation_counts = pd.DataFrame.from_dict({"relation_counts": relation_counts_train}).sort_index()
     df_relation_counts["reg_val"] = torch.exp(best_lmbda_pred[:,-1]).tolist()
     df_relation_counts["reg_val_times_n"] = df_relation_counts["reg_val"] * df_relation_counts["relation_counts"]
-    m, b = np.polyfit(df_relation_counts["relation_counts"], df_relation_counts["reg_val_times_n"], 1)
+    fit = np.polyfit(np.array(df_relation_counts["relation_counts"]), np.array(df_relation_counts["reg_val_times_n"]), 1)
     plot = df_relation_counts.plot("relation_counts", "reg_val_times_n", style="o", color="k")
-    plot.plot(np.array(df_relation_counts["relation_counts"]), m*np.array(df_relation_counts["relation_counts"]+b), 'k-')
+    new_x = np.linspace(np.min(df_relation_counts["relation_counts"]), np.max(df_relation_counts["relation_counts"]))
+    new_y = np.linspace(fit[0] * np.min(df_relation_counts["relation_counts"]) + fit[1],
+                        fit[0] * np.max(df_relation_counts["relation_counts"]) + fit[1])
+    plot.plot(new_x, new_y, 'k-')
     plot.set_yscale('log')
     plot.set_xscale('log')
     plt.xlabel("Number of triples containing given relation")
