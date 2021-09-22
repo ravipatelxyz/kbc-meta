@@ -576,16 +576,14 @@ def main(args):
     df_entity_counts["reg_val"] = torch.exp(best_lmbda_ent[:,-1]).tolist()
     df_entity_counts["reg_val_times_n"] = df_entity_counts["reg_val"] * df_entity_counts["entity_counts"]
     fit = np.polyfit(np.array(df_entity_counts["entity_counts"]), np.array(df_entity_counts["reg_val_times_n"]), 1)
-    plot = df_entity_counts.plot("entity_counts", "reg_val_times_n", style="o", color="k", loglog=True)
-    new_x = np.linspace(np.min(df_entity_counts["entity_counts"]), np.max(df_entity_counts["entity_counts"]))
-    new_y = np.linspace(fit[0]*np.min(df_entity_counts["entity_counts"])+fit[1], fit[0]*np.max(df_entity_counts["entity_counts"])+fit[1])
-    plot.plot(new_x, new_y, 'k-')
-    plot.set_yscale('log')
-    plot.set_xscale('log')
-    plt.xlabel("Number of triples containing given entity")
+    plot = df_entity_counts.plot("entity_counts", "reg_val_times_n", style="o", color="k", loglog=True, legend=None)
+    # new_x = np.linspace(np.min(df_entity_counts["entity_counts"]), np.max(df_entity_counts["entity_counts"]))
+    # new_y = np.linspace(fit[0]*np.min(df_entity_counts["entity_counts"]), fit[0]*np.max(df_entity_counts["entity_counts"]))
+    # plot.plot(new_x, new_y, 'k-')
+    plt.xlabel("Number of triples containing entity")
     plt.ylabel("Regularisation strength")
     plt.title(f"Regularisation strength by entity frequency", fontsize=14, fontweight='bold')
-    plt.legend(["meta-learnt regularisation values", "proportional fit"])
+    # plt.legend(["meta-learnt regularisation values", "proportional fit"])
     plt.tight_layout()
     if save_figs:
         filename = f"realmeta_nations_regstrength_v_entityfreq_{timestr}.png"
@@ -599,17 +597,15 @@ def main(args):
     df_relation_counts["reg_val"] = torch.exp(best_lmbda_pred[:,-1]).tolist()
     df_relation_counts["reg_val_times_n"] = df_relation_counts["reg_val"] * df_relation_counts["relation_counts"]
     fit = np.polyfit(np.array(df_relation_counts["relation_counts"]), np.array(df_relation_counts["reg_val_times_n"]), 1)
-    plot = df_relation_counts.plot("relation_counts", "reg_val_times_n", style="o", color="k")
-    new_x = np.linspace(np.min(df_relation_counts["relation_counts"]), np.max(df_relation_counts["relation_counts"]))
-    new_y = np.linspace(fit[0] * np.min(df_relation_counts["relation_counts"]) + fit[1],
-                        fit[0] * np.max(df_relation_counts["relation_counts"]) + fit[1])
-    plot.plot(new_x, new_y, 'k-')
-    plot.set_yscale('log')
-    plot.set_xscale('log')
-    plt.xlabel("Number of triples containing given relation")
+    plot = df_relation_counts.plot("relation_counts", "reg_val_times_n", style="o", color="k", loglog=True, legend=None)
+    # new_x = np.linspace(np.min(df_relation_counts["relation_counts"]), np.max(df_relation_counts["relation_counts"]))
+    # new_y = np.linspace(fit[0] * np.min(df_relation_counts["relation_counts"]) + fit[1],
+    #                     fit[0] * np.max(df_relation_counts["relation_counts"]) + fit[1])
+    # plot.plot(new_x, new_y, 'k-')
+    plt.xlabel("Number of triples containing relation")
     plt.ylabel("Regularisation strength")
     plt.title(f"Regularisation strength by relation frequency", fontsize=14, fontweight='bold')
-    plt.legend(["meta-learnt regularisation values", "proportional fit"])
+    # plt.legend(["meta-learnt regularisation values", "proportional fit"])
     plt.tight_layout()
     if save_figs:
         filename = f"realmeta_nations_regstrength_v_relationfreq_{timestr}.png"
