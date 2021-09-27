@@ -117,6 +117,8 @@ def parse_args(argv):
     parser.add_argument('--regweight_init', '-rw', type=float, default=0.001)
     parser.add_argument('--accum_steps', '-as', action='store', type=int, default=1)
 
+    parser.add_argument('--es_std', '-es', action='store', type=float)
+
     parser.add_argument('--corruption', '-c', action='store', type=str, default='so',
                         choices=['so', 'spo'])
     parser.add_argument('--seed', action='store', type=int, default=0)
@@ -136,7 +138,7 @@ def parse_args(argv):
     parser.add_argument('--stopping_tol_outer', '-to', action='store', type=float, default=None)
     parser.add_argument('--grad_clip_val_outer', '-gc', action='store', type=float, default=None)
     parser.add_argument('--regweight_rescaler', '-rr', action='store', type=float, default=None)
-    parser.add_argument('--regweight_rescaler_tol', '-rt', action='store', type=float, default=1e-10)
+    parser.add_argument('--regweight_rescaler_tol', '-rt', action='store', type=float, default=1)
 
     # other
     parser.add_argument('--load', action='store', type=str, default=None)
@@ -170,6 +172,7 @@ def main(args):
     validate_all = args.validate_all == 'True'
     input_type = args.input_type
     accum_steps = args.accum_steps
+    es_std = args.es_std
 
     optimizer_outer_name = args.optimizer_outer
     learning_rate_outer = args.learning_rate_outer
@@ -249,8 +252,6 @@ def main(args):
     elif regularizer == "N3":
         N3_reg = N3()
 
-    # regularizer_weights = nn.Embedding(1, 1).to(device)
-    # reg_weight_graph = deepcopy(regularizer_weights.weight)
     reg_weight_graph = torch.tensor(np.log(regweight_init), requires_grad=True, device=device)
 
     optimizer_factory_outer = {
@@ -261,8 +262,12 @@ def main(args):
 
     optimizer_outer = optimizer_factory_outer[optimizer_outer_name]()
 
-    if grad_clip_val_outer is not None:
-        reg_weight_graph.register_hook(lambda grad: torch.clamp(grad, -grad_clip_val_outer, grad_clip_val_outer))
+    # Hacky method to set .grad attribute to 0 instead of None
+    reg_weight_graph.backward()
+    optimizer_outer.zero_grad()
+
+    # if grad_clip_val_outer is not None:
+    #     reg_weight_graph.register_hook(lambda grad: torch.clamp(grad, -grad_clip_val_outer, grad_clip_val_outer))
 
     # Specify loss function (cross-entropy by default), used for both inner and outer loops
     loss_function = nn.CrossEntropyLoss(reduction='mean')
@@ -307,7 +312,6 @@ def main(args):
 
     for outer_step in range(outer_steps): # the outer loop
 
-        torch.manual_seed(0)
         accum_losses_outer_dev = []
         accum_losses_outer_train = []
         for accum_step in range(accum_steps):  # a full inner loop
@@ -316,6 +320,7 @@ def main(args):
             e_graph.to(device)
             p_graph = deepcopy(predicate_embeddings.weight)
             e_graph.to(device)
+            es_noise = torch.normal(torch.tensor(0.0), torch.tensor(es_std))
 
             optimizer_factory = {
                 'adagrad': lambda: optim.Adagrad([e_graph, p_graph], lr=learning_rate),
@@ -325,8 +330,6 @@ def main(args):
 
             assert optimizer_name in optimizer_factory
             optimizer = optimizer_factory[optimizer_name]()
-
-            diffopt = higher.get_diff_optim(optimizer, [e_graph, p_graph], track_higher_grads=True)
 
             losses_inner_train = []
             losses_inner_dev = []
@@ -360,12 +363,14 @@ def main(args):
                     batch_losses_train_nonreg += [batch_loss_train_nonreg]
 
                     if regularizer == "F2":
-                        batch_loss_train += torch.exp(reg_weight_graph) * F2_reg(factors)
+                        batch_loss_train += torch.exp(reg_weight_graph + es_noise) * F2_reg(factors)
 
                     if regularizer == "N3":
-                        batch_loss_train += torch.exp(reg_weight_graph) * N3_reg(factors)
+                        batch_loss_train += torch.exp(reg_weight_graph + es_noise) * N3_reg(factors)
 
-                    e_graph, p_graph = diffopt.step(batch_loss_train, params=[e_graph, p_graph])
+                    batch_loss_train.backward(inputs=[e_graph, p_graph])
+                    optimizer.step()
+                    optimizer.zero_grad()
 
                     batch_loss_train_withreg = batch_loss_train.item()
                     batch_losses_train_withreg += [batch_loss_train_withreg]
@@ -415,8 +420,9 @@ def main(args):
                                            loss_function=loss_function,
                                            masks=masks_dev)
 
-            loss_outer_dev.backward()
-            # print(f"Accum step: {accum_step}, Grad: {reg_weight_graph.grad}")
+
+            reg_weight_graph.grad += es_noise*loss_outer_dev
+
             accum_losses_outer_dev += [loss_outer_dev.item()]
 
             # store a copy of best embeddings
@@ -473,12 +479,15 @@ def main(args):
                                      "BestMeanAccum_regularisation_weight": np.exp(reg_weight_vals[-1])
                                      }
 
-        reg_weight_graph.grad = reg_weight_graph.grad/accum_steps
+
+        reg_weight_graph.grad *= 1/(accum_steps*es_std**2)
+        print(f"Reg val: {np.exp(reg_weight_graph.item()):.7f}")
+        print(f"Mean dev loss: {mean_losses_outer_dev[-1]:.4f}")
         optimizer_outer.step()
-        if torch.absolute(reg_weight_graph.grad) < regweight_rescaler_tol:
-            reg_weight_graph.requires_grad = False
-            reg_weight_graph *= regweight_rescaler
-            reg_weight_graph.requires_grad = True
+        # if torch.absolute(reg_weight_graph.grad) < regweight_rescaler_tol:
+        #     reg_weight_graph.requires_grad = False
+        #     reg_weight_graph *= regweight_rescaler
+        #     reg_weight_graph.requires_grad = True
         optimizer_outer.zero_grad()
 
         # plots training and dev loss for a full inner loop
