@@ -266,9 +266,6 @@ def main(args):
     reg_weight_graph.backward()
     optimizer_outer.zero_grad()
 
-    # if grad_clip_val_outer is not None:
-    #     reg_weight_graph.register_hook(lambda grad: torch.clamp(grad, -grad_clip_val_outer, grad_clip_val_outer))
-
     # Specify loss function (cross-entropy by default), used for both inner and outer loops
     loss_function = nn.CrossEntropyLoss(reduction='mean')
 
@@ -364,6 +361,7 @@ def main(args):
 
                     if regularizer == "F2":
                         batch_loss_train += torch.exp(reg_weight_graph + es_noise) * F2_reg(factors)
+                        # print(torch.exp(reg_weight_graph + es_noise))
 
                     if regularizer == "N3":
                         batch_loss_train += torch.exp(reg_weight_graph + es_noise) * N3_reg(factors)
@@ -446,13 +444,22 @@ def main(args):
         mean_accum_loss_outer_train = np.mean(accum_losses_outer_train)
         mean_accum_loss_outer_dev = np.mean(accum_losses_outer_dev)
 
+        reg_weight_graph.grad *= 1/(accum_steps*es_std**2)
+
+        # Gradient clipping
+        if grad_clip_val_outer is not None:
+            if reg_weight_graph.grad >= grad_clip_val_outer:
+                reg_weight_graph.grad *= (1/reg_weight_graph.grad)*grad_clip_val_outer
+            elif reg_weight_graph.grad <= -grad_clip_val_outer:
+                reg_weight_graph.grad *= (1/reg_weight_graph.grad)*-grad_clip_val_outer
+
         # for plotting only
         mean_losses_outer_train += [mean_accum_loss_outer_train.item()]
         mean_losses_outer_dev += [mean_accum_loss_outer_dev.item()]
         e_vals += [torch.norm(e_graph.detach().clone()).item()]
         p_vals += [torch.norm(p_graph.detach().clone()).item()]
         reg_weight_vals += [reg_weight_graph.detach().clone().item()]
-        gradients_outer += [(reg_weight_graph.grad/accum_steps).item()]
+        gradients_outer += [reg_weight_graph.grad.item()]
         if use_wandb:
             outer_log = {"train_loss_outer": mean_losses_outer_train[-1],
                          "dev_loss_outer": mean_losses_outer_dev[-1],
@@ -480,14 +487,9 @@ def main(args):
                                      }
 
 
-        reg_weight_graph.grad *= 1/(accum_steps*es_std**2)
         print(f"Reg val: {np.exp(reg_weight_graph.item()):.7f}")
         print(f"Mean dev loss: {mean_losses_outer_dev[-1]:.4f}")
         optimizer_outer.step()
-        # if torch.absolute(reg_weight_graph.grad) < regweight_rescaler_tol:
-        #     reg_weight_graph.requires_grad = False
-        #     reg_weight_graph *= regweight_rescaler
-        #     reg_weight_graph.requires_grad = True
         optimizer_outer.zero_grad()
 
         # plots training and dev loss for a full inner loop
