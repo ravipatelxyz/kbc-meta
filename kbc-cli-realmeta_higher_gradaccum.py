@@ -434,7 +434,7 @@ def main(args):
                                 "best_dev_loss_outer": best_loss_outer_dev,
                                 "best_L2_norm_entity_embeddings": torch.norm(best_e_graph).item(),
                                 "best_L2_norm_predicate_embeddings": torch.norm(best_p_graph).item(),
-                                "best_regularisation_weight": np.exp(best_reg_weight.item())
+                                "best_regularisation_weight": np.exp(best_reg_weight)
                                 }
 
         mean_accum_loss_outer_train = np.mean(accum_losses_outer_train)
