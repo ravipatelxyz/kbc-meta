@@ -360,8 +360,12 @@ def main(args):
                     batch_losses_train_nonreg += [batch_loss_train_nonreg]
 
                     if regularizer == "F2":
+                        # batch_loss_train += (torch.exp(reg_weight_graph) + es_noise) * F2_reg(factors)
                         batch_loss_train += torch.exp(reg_weight_graph + es_noise) * F2_reg(factors)
-                        # print(torch.exp(reg_weight_graph + es_noise))
+                        # if epoch_no == nb_epochs-1:
+                        #     # print(es_noise)
+                        #     # print(reg_weight_graph + es_noise)
+                        #     print(torch.exp(reg_weight_graph + es_noise).item())
 
                     if regularizer == "N3":
                         batch_loss_train += torch.exp(reg_weight_graph + es_noise) * N3_reg(factors)
@@ -418,6 +422,7 @@ def main(args):
                                            loss_function=loss_function,
                                            masks=masks_dev)
 
+            # print(loss_outer_dev)
 
             reg_weight_graph.grad += es_noise*loss_outer_dev
 
@@ -436,8 +441,8 @@ def main(args):
                 if use_wandb:
                     best_log = {"best_train_loss_outer": accum_losses_outer_train[-1],
                                 "best_dev_loss_outer": best_loss_outer_dev,
-                                "best_L2_norm_entity_embeddings": best_e_graph.item(),
-                                "best_L2_norm_predicate_embeddings": best_p_graph.item(),
+                                "best_L2_norm_entity_embeddings": torch.norm(best_e_graph).item(),
+                                "best_L2_norm_predicate_embeddings": torch.norm(best_p_graph).item(),
                                 "best_regularisation_weight": np.exp(best_reg_weight.item())
                                 }
 

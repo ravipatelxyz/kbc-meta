@@ -432,8 +432,8 @@ def main(args):
                 if use_wandb:
                     best_log = {"best_train_loss_outer": accum_losses_outer_train[-1],
                                 "best_dev_loss_outer": best_loss_outer_dev,
-                                "best_L2_norm_entity_embeddings": best_e_graph.item(),
-                                "best_L2_norm_predicate_embeddings": best_p_graph.item(),
+                                "best_L2_norm_entity_embeddings": torch.norm(best_e_graph).item(),
+                                "best_L2_norm_predicate_embeddings": torch.norm(best_p_graph).item(),
                                 "best_regularisation_weight": np.exp(best_reg_weight.item())
                                 }
 
@@ -457,6 +457,7 @@ def main(args):
                          }
             wandb.log(outer_log, step=outer_step)
 
+        print(np.exp(reg_weight_graph.item()))
         if not is_quiet:
             logger.info(f"outer dev loss: {mean_losses_outer_dev[-1]:.7f}, reg param: {np.exp(reg_weight_graph.item()):.7f} [{reg_weight_graph.item():.5f}], reg param gradient: {gradients_outer[-1]}")
 

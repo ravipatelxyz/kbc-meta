@@ -170,9 +170,8 @@ def parse_args(argv):
     parser.add_argument('--save_figs', '-sf', action='store', type=str, default='False', choices=['True', 'False'])
     parser.add_argument('--use_wandb', '-wb', action='store', type=str, default='False', choices=['True', 'False'])
 
-
-
     return parser.parse_args(argv)
+
 
 def main(args):
     import pprint
