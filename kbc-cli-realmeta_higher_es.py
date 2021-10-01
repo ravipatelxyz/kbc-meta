@@ -449,7 +449,7 @@ def main(args):
         mean_accum_loss_outer_train = np.mean(accum_losses_outer_train)
         mean_accum_loss_outer_dev = np.mean(accum_losses_outer_dev)
 
-        reg_weight_graph.grad *= 1/(accum_steps*es_std**2)
+        reg_weight_graph.grad *= 1/(reg_weight_graph*accum_steps*es_std**2)
 
         # Gradient clipping
         if grad_clip_val_outer is not None:
@@ -558,7 +558,7 @@ def main(args):
         logger.info(f'Best \t{name} results\t{metrics_to_str(metrics_best)}')
 
     if use_wandb == True:
-        wandb.log(eval_log, step=nb_epochs, commit=True)
+        wandb.log(metrics_log, step=nb_epochs, commit=True)
 
     plt.figure()
     plt.plot(best_losses_inner_train, 'k-')
