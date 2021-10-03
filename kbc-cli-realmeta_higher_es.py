@@ -311,13 +311,17 @@ def main(args):
 
         accum_losses_outer_dev = []
         accum_losses_outer_train = []
+
         for accum_step in range(accum_steps):  # a full inner loop
 
             e_graph = deepcopy(entity_embeddings.weight)
             e_graph.to(device)
             p_graph = deepcopy(predicate_embeddings.weight)
             e_graph.to(device)
-            es_noise = torch.normal(torch.tensor(0.0), torch.tensor(es_std))
+            if outer_step < outer_steps-1:
+                es_noise = torch.normal(torch.tensor(0.0), torch.tensor(es_std))
+            elif outer_step == outer_steps-1:
+                es_noise = 0
 
             optimizer_factory = {
                 'adagrad': lambda: optim.Adagrad([e_graph, p_graph], lr=learning_rate),
