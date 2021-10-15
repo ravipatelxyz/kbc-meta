@@ -490,7 +490,7 @@ def main(args):
             plt.legend(["training loss", "masked validation loss"])
             plt.xlabel("Epoch (inner step)")
             plt.ylabel("Inner loss")
-            plt.title(f"Inner losses\n[inner loop number {outer_step+1}, gradient accumulation step {accum_step+1}]", fontsize=12, fontweight='bold')
+            plt.title(f"Inner losses\n[outer loop number {outer_step+1}, gradient accumulation step {accum_step+1}]", fontsize=12, fontweight='bold')
             plt.tight_layout()
             if save_figs:
                 filename = f"realmeta_nations_innerloss_outerstep{outer_step+1}_{timestr}.png"
@@ -543,7 +543,7 @@ def main(args):
         logger.info(f'Best \t{name} results\t{metrics_to_str(metrics_best)}')
 
     if use_wandb == True:
-        wandb.log(eval_log, step=nb_epochs, commit=True)
+        wandb.log(metrics_log, step=nb_epochs, commit=True)
 
     plt.figure()
     plt.plot(best_losses_inner_train, 'k-')
@@ -551,7 +551,7 @@ def main(args):
     plt.legend(["training loss", "masked validation loss"])
     plt.xlabel("Epoch (inner step)")
     plt.ylabel("Inner loss")
-    plt.title(f"Inner losses\n[inner loop number {best_outer_step + 1}, gradient accumulation step {best_accum_step+1}]", fontsize=12, fontweight='bold')
+    plt.title(f"Inner losses\n[outer loop number {best_outer_step + 1}, gradient accumulation step {best_accum_step+1}]", fontsize=12, fontweight='bold')
     plt.tight_layout()
     if save_figs:
         filename = f"realmeta_nations_innertrainloss_outerstep{best_outer_step + 1}_{timestr}.png"

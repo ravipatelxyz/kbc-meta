@@ -401,7 +401,7 @@ def main(args):
             plt.legend(["training loss", "masked validation loss"])
             plt.xlabel("Epoch (inner step)")
             plt.ylabel("Inner loss")
-            plt.title(f"Inner losses, for inner loop number {outer_step+1}", fontsize=14, fontweight='bold')
+            plt.title(f"Inner losses, for outer loop number {outer_step+1}", fontsize=14, fontweight='bold')
             plt.tight_layout()
             if save_figs:
                 filename = f"realmeta_nations_innerloss_outerstep{outer_step+1}_{timestr}.png"
@@ -509,7 +509,7 @@ def main(args):
     plt.legend(["training loss", "masked validation loss"])
     plt.xlabel("Epoch (inner step)")
     plt.ylabel("Inner loss")
-    plt.title(f"Inner losses, for inner loop number {best_outer_step + 1}", fontsize=14, fontweight='bold')
+    plt.title(f"Inner losses, for outer loop number {best_outer_step + 1}", fontsize=14, fontweight='bold')
     plt.tight_layout()
     if save_figs:
         filename = f"realmeta_nations_innertrainloss_outerstep{best_outer_step + 1}_{timestr}.png"
@@ -539,6 +539,7 @@ def main(args):
     plt.plot(np.exp(reg_weight_vals), 'k-')
     plt.xlabel("Outer step")
     plt.ylabel("Regularisation weight value")
+    plt.ylim([0, 0.045])
     plt.title(f"{regularizer} regularisation weight values", fontsize=14, fontweight='bold')
     plt.tight_layout()
     if save_figs:

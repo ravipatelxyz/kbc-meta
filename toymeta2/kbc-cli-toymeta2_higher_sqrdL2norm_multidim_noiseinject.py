@@ -202,22 +202,22 @@ def main(args):
     print(h_vals[-1])
 
     plt.figure(1)
-    plt.plot(meta_losses)
+    plt.plot(meta_losses, color='k')
     # plt.plot(a_vals)
     # plt.plot(h_vals)
     # plt.plot(c_vals)
     # plt.legend(["meta loss", "a", "h", "c"])
     plt.xlabel("Outer step")
-    plt.ylabel("Value as specified in legend")
-    plt.title(
-        f"Starting values: a={args.a}, h={args.h}, c={args.c}\nInner steps: {inner_steps} | LR: {learning_rate} | Outer steps: {outer_steps} | OuterLR: {learning_rate_outer} \nOptim: {optimizer_name} | Converges step: {convergence_outer_step} | Converges total steps: {convergence_total_steps}")
+    plt.ylabel("Meta-loss")
+    # plt.title(f"Starting values: a={args.a}, h={args.h}, c={args.c}\nInner steps: {inner_steps} | LR: {learning_rate} | Outer steps: {outer_steps} | OuterLR: {learning_rate_outer} \nOptim: {optimizer_name} | Converges step: {convergence_outer_step} | Converges total steps: {convergence_total_steps}")
+    plt.title("Meta-loss by outer step", weight='bold')
     plt.tight_layout()
     if save_figs == True:
-        filename = f"toymeta2_loss_a{args.a}_h{args.h}_c{args.c}_is{inner_steps}_lr{learning_rate}_os{outer_steps}_outlr{learning_rate_outer}_optim{optimizer_name}.png"
+        filename = f"toymeta2_loss_noise{args.inner_loss_noise_sd}_a{args.a}_h{args.h}_c{args.c}_is{inner_steps}_lr{learning_rate}_os{outer_steps}_outlr{learning_rate_outer}_optim{optimizer_name}.png"
         if use_wandb == True:
             plt.savefig(os.path.join(wandb.run.dir, filename))
         else:
-            plt.savefig(f"./toymeta2/plots/{filename}")
+            plt.savefig(f"./plots/{filename}", dpi=300)
 
     plt.show()
 
@@ -225,34 +225,35 @@ def main(args):
     window = 1
     rolling_mean_grads = df_grad.rolling(window=window).mean()
     plt.figure(2)
-    plt.plot(rolling_mean_grads)
-    plt.plot(h_grads_noisy)
-    plt.title(f"Rolling {window}-step mean gradient value")
+    # plt.plot(rolling_mean_grads, "-", color='k')
+    plt.plot(h_grads_noisy, "-", color='k')
+    # plt.title(f"Rolling {window}-step mean gradient value")
+    plt.title("L2 norm of hyper-gradient by outer step", weight='bold')
     plt.xlabel("Outer step")
     plt.ylabel("L2 norm of gradient of loss wrt hyperparameter h")
     plt.tight_layout()
     if save_figs == True:
-        filename = f"toymeta2_grad_rollingavg_a{args.a}_h{args.h}_c{args.c}_is{inner_steps}_lr{learning_rate}_os{outer_steps}_outlr{learning_rate_outer}_optim{optimizer_name}.png"
+        filename = f"toymeta2_grad_rollingavg_noise{args.inner_loss_noise_sd}a{args.a}_h{args.h}_c{args.c}_is{inner_steps}_lr{learning_rate}_os{outer_steps}_outlr{learning_rate_outer}_optim{optimizer_name}.png"
         if use_wandb == True:
             plt.savefig(os.path.join(wandb.run.dir, filename))
         else:
-            plt.savefig(f"./toymeta2/plots/{filename}")
+            plt.savefig(f"./plots/{filename}", dpi=300)
     plt.show()
 
     array_grads = np.array(h_grads)
     plt.figure(3)
-    plt.hist(np.absolute(array_grads), bins=80)
+    plt.hist(np.absolute(array_grads), bins=80, color='k')
     plt.title(
-        f" Magnitude of hypergradient of loss wrt hyperparameter h \nMean: {np.mean(np.absolute(array_grads)):.10f} | SD: {np.std(h_grads):.10f} | Median {np.median(np.absolute(array_grads)):.10f}")
+        f" Magnitude of hypergradient of loss wrt hyperparameter h \nMean: {np.mean(np.absolute(array_grads)):.10f} | SD: {np.std(h_grads):.10f} | Median {np.median(np.absolute(array_grads)):.10f}", weight='bold', size=10)
     plt.ylabel("Frequency")
     plt.xlabel("Hypergradient magnitude")
     plt.tight_layout()
     if save_figs == True:
-        filename = f"toymeta2_grad_gradhist_a{args.a}_h{args.h}_c{args.c}_is{inner_steps}_lr{learning_rate}_os{outer_steps}_outlr{learning_rate_outer}_optim{optimizer_name}.png"
+        filename = f"toymeta2_grad_gradhist_noise{args.inner_loss_noise_sd}_a{args.a}_h{args.h}_c{args.c}_is{inner_steps}_lr{learning_rate}_os{outer_steps}_outlr{learning_rate_outer}_optim{optimizer_name}.png"
         if use_wandb == True:
             plt.savefig(os.path.join(wandb.run.dir, filename))
         else:
-            plt.savefig(f"./toymeta2/plots/{filename}")
+            plt.savefig(f"./plots/{filename}", dpi=300)
     plt.show()
 
     if use_wandb == True:

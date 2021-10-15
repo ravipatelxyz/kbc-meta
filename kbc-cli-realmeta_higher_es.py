@@ -320,6 +320,7 @@ def main(args):
             e_graph.to(device)
             if outer_step < outer_steps-1:
                 es_noise = torch.normal(torch.tensor(0.0), torch.tensor(es_std))
+                # print(es_noise)
             elif outer_step == outer_steps-1:
                 es_noise = 0
 
@@ -453,7 +454,7 @@ def main(args):
         mean_accum_loss_outer_train = np.mean(accum_losses_outer_train)
         mean_accum_loss_outer_dev = np.mean(accum_losses_outer_dev)
 
-        reg_weight_graph.grad *= 1/(reg_weight_graph*accum_steps*es_std**2)
+        reg_weight_graph.grad *= 1/(accum_steps*es_std**2)
 
         # Gradient clipping
         if grad_clip_val_outer is not None:
