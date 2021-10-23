@@ -1,4 +1,5 @@
-This repository contains all code corresponding to the **UCL Machine Learning MSc thesis** submission for candidate **NXLX9**.
-
-**Thesis title:** Gradient-based Regularisation Hyperparameter Optimisation for Neural Link Predictors
+**Thesis title:** Gradient-based Regularisation Hyperparameter Optimisation for Neural Link Predictors //
+**Candidate number**: NXLX9 //
 **Supervisors:** Yihong Chen, Pasquale Minervini, Pontus Stenetorp
+
+This repository contains all code corresponding to the stated thesis, submitted as part of **UCL Machine Learning MSc**.
