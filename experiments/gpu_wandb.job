@@ -1,0 +1,19 @@
+#!/bin/bash -l
+
+#$ -cwd
+#$ -S /bin/bash
+#$ -o $HOME/kbc_meta/logs/array.out
+#$ -e $HOME/kbc_meta/logs/array.err
+#$ -t 1
+#$ -l tmem=10G
+#$ -l h_rt=00:05:00
+#$ -l gpu=true
+export LANG="en_US.utf8"
+export LANGUAGE="en_US:en"
+source $HOME/.activate_conda
+export WANDB_API_KEY=9903f079d28315317cc996b863de147f9135a2bf
+cd $HOME/kbc_meta
+
+
+test $SGE_TASK_ID -eq 1 && sleep 30 && PYTHONPATH=. wandb agent uclnlp/kbc_meta/r19zf5v2
+
