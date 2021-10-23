@@ -1,3 +1,4 @@
-# kbc-lm
+This repository contains all code corresponding to the **UCL Machine Learning MSc thesis** submission for candidate **NXLX9**.
 
-[![wercker status](https://app.wercker.com/status/ae351583913d88eec5b6a1aa50acd0db/m/master "wercker status")](https://app.wercker.com/project/byKey/ae351583913d88eec5b6a1aa50acd0db)
+**Thesis title:** Gradient-based Regularisation Hyperparameter Optimisation for Neural Link Predictors
+**Supervisors:** Yihong Chen, Pasquale Minervini, Pontus Stenetorp
