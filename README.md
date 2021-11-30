@@ -9,7 +9,7 @@ This repository contains all code corresponding to the stated thesis, submitted 
 
 # Abstract
 
-*See thesis PDF for Abstract citations*
+*See [thesis PDF](https://drive.google.com/file/d/1684TMK-dd9c-RLvGT9wLK2qK52r1JX29/view?usp=sharing) for Abstract citations*
 
 Innovations in neural link prediction models have been plentiful of late, with representation learning approaches continuing to achieve state of the art performance on benchmark datasets. Model performance has been shown to be highly dependent on hyperparameter choice, including the method and strength of regularisation. Sparsity in knowledge graph datasets, with long-tailed entity/relation frequency distributions due to infrequent entities and relations, presents a special challenge to mitigate over overfitting through regularisation. Work to date has focused on L2-norm or tensor N3-norm penalty regularisation with regularisation strength controlled by a single scalar hyperparameter. This leaves significant scope for innovation in the regulariser, including consideration of heavily hyperparameterised regularisers, to improve model generalisation performance.
 
